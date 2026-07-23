@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  color: #e5e7eb;
+  background:
+    radial-gradient(1200px 800px at 12% -10%, rgba(20, 184, 166, 0.16), transparent 55%),
+    radial-gradient(1000px 700px at 100% 0%, rgba(245, 158, 11, 0.10), transparent 50%),
+    #0a0d0c;
+  overflow: hidden;
+}
+
+/* thin, dark scrollbars that fit the theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #24322e;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #33463f;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Keep native <select> dropdowns dark to match the theme (WebView2 otherwise
+   renders the option list with a light system background). */
+select {
+  color-scheme: dark;
+}
+select option,
+select optgroup {
+  background-color: #0f172a; /* slate-900 */
+  color: #e5e7eb;
+}
+
+@keyframes bv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.bv-spin {
+  animation: bv-spin 0.8s linear infinite;
+}
+
+@keyframes bv-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.bv-fade {
+  animation: bv-fade-up 0.25s ease-out both;
+}

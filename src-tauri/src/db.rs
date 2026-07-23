@@ -1,0 +1,449 @@
+//! SQLite persistence via rusqlite (bundled). Holds the book library, extracted /
+//! fetched metadata, reading state, and app settings. The connection lives behind
+//! a Mutex in app state; every function here takes `&Connection`.
+
+use anyhow::Result;
+use rusqlite::{params, Connection, OptionalExtension, Row};
+
+use crate::models::{Book, BookEdit, CategoryStat, DashboardStats, Settings};
+
+pub fn open(path: &std::path::Path) -> Result<Connection> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let conn = Connection::open(path)?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA foreign_keys = ON;",
+    )?;
+    migrate(&conn)?;
+    Ok(conn)
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS books (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            path           TEXT NOT NULL UNIQUE,
+            filename       TEXT NOT NULL,
+            format         TEXT NOT NULL,
+            size           INTEGER NOT NULL DEFAULT 0,
+            title          TEXT NOT NULL DEFAULT '',
+            author         TEXT,
+            series         TEXT,
+            publisher      TEXT,
+            published_date TEXT,
+            language       TEXT,
+            isbn           TEXT,
+            description    TEXT,
+            category       TEXT,
+            subjects       TEXT,
+            cover_path     TEXT,
+            pages          INTEGER,
+            words          INTEGER,
+            words_estimated INTEGER NOT NULL DEFAULT 0,
+            status         TEXT NOT NULL DEFAULT 'unread',
+            current_page   INTEGER NOT NULL DEFAULT 0,
+            rating         INTEGER,
+            meta_status    TEXT NOT NULL DEFAULT 'none',
+            meta_source    TEXT,
+            started_at     INTEGER,
+            finished_at    INTEGER,
+            added_at       INTEGER NOT NULL DEFAULT 0,
+            updated_at     INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_books_status   ON books(status);
+        CREATE INDEX IF NOT EXISTS idx_books_category ON books(category);
+        "#,
+    )?;
+    Ok(())
+}
+
+// ---------- settings ----------
+
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let v = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?;
+    Ok(v)
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO settings(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn load_settings(conn: &Connection) -> Result<Settings> {
+    let g = |k: &str| get_setting(conn, k).ok().flatten().unwrap_or_default();
+    let words_per_page = g("words_per_page").parse::<i64>().unwrap_or(0);
+    Ok(Settings {
+        books_root: g("books_root"),
+        words_per_page: if words_per_page > 0 { words_per_page } else { 275 },
+    })
+}
+
+pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
+    set_setting(conn, "books_root", &s.books_root)?;
+    let wpp = if s.words_per_page > 0 { s.words_per_page } else { 275 };
+    set_setting(conn, "words_per_page", &wpp.to_string())?;
+    Ok(())
+}
+
+// ---------- books ----------
+
+const BOOK_COLS: &str = "id, path, filename, format, size, title, author, series, publisher,
+    published_date, language, isbn, description, category, subjects, cover_path, pages, words,
+    words_estimated, status, current_page, rating, meta_status, meta_source, started_at,
+    finished_at, added_at, updated_at";
+
+fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
+    Ok(Book {
+        id: r.get(0)?,
+        path: r.get(1)?,
+        filename: r.get(2)?,
+        format: r.get(3)?,
+        size: r.get(4)?,
+        title: r.get(5)?,
+        author: r.get(6)?,
+        series: r.get(7)?,
+        publisher: r.get(8)?,
+        published_date: r.get(9)?,
+        language: r.get(10)?,
+        isbn: r.get(11)?,
+        description: r.get(12)?,
+        category: r.get(13)?,
+        subjects: r.get(14)?,
+        cover_path: r.get(15)?,
+        pages: r.get(16)?,
+        words: r.get(17)?,
+        words_estimated: r.get::<_, i64>(18)? != 0,
+        status: r.get(19)?,
+        current_page: r.get(20)?,
+        rating: r.get(21)?,
+        meta_status: r.get(22)?,
+        meta_source: r.get(23)?,
+        started_at: r.get(24)?,
+        finished_at: r.get(25)?,
+        added_at: r.get(26)?,
+        updated_at: r.get(27)?,
+    })
+}
+
+/// A freshly-scanned book plus everything extracted from the file itself.
+pub struct ScannedBook {
+    pub path: String,
+    pub filename: String,
+    pub format: String,
+    pub size: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub publisher: Option<String>,
+    pub published_date: Option<String>,
+    pub language: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+    pub subjects: Option<String>,
+    pub cover_path: Option<String>,
+    pub pages: Option<i64>,
+    pub words: Option<i64>,
+    pub words_estimated: bool,
+    /// "embedded" if the file carried a title, otherwise "none".
+    pub meta_status: String,
+}
+
+/// Insert a newly-scanned book. If the path already exists, refresh only the
+/// file-derived fields, preserving any user edits / fetched metadata / reading
+/// state. Returns (id, inserted).
+pub fn upsert_scanned(conn: &Connection, b: &ScannedBook, now: i64) -> Result<(i64, bool)> {
+    let existing: Option<i64> = conn
+        .query_row("SELECT id FROM books WHERE path = ?1", [&b.path], |r| r.get(0))
+        .optional()?;
+    if let Some(id) = existing {
+        // Keep it simple: only refresh size + filename so the row tracks the file.
+        conn.execute(
+            "UPDATE books SET filename=?2, size=?3, updated_at=?4 WHERE id=?1",
+            params![id, b.filename, b.size, now],
+        )?;
+        Ok((id, false))
+    } else {
+        conn.execute(
+            "INSERT INTO books(
+                path, filename, format, size, title, author, publisher, published_date,
+                language, isbn, description, subjects, cover_path, pages, words,
+                words_estimated, meta_status, added_at, updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18)",
+            params![
+                b.path, b.filename, b.format, b.size, b.title, b.author, b.publisher,
+                b.published_date, b.language, b.isbn, b.description, b.subjects, b.cover_path,
+                b.pages, b.words, b.words_estimated as i64, b.meta_status, now
+            ],
+        )?;
+        Ok((conn.last_insert_rowid(), true))
+    }
+}
+
+/// Delete books whose files are no longer under the scan root. `live_paths` are
+/// the paths seen during the current scan.
+pub fn delete_missing(conn: &Connection, live_paths: &[String]) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_paths(p TEXT PRIMARY KEY)", [])?;
+    tx.execute("DELETE FROM live_paths", [])?;
+    {
+        let mut stmt = tx.prepare("INSERT OR IGNORE INTO live_paths(p) VALUES(?1)")?;
+        for p in live_paths {
+            stmt.execute([p])?;
+        }
+    }
+    let removed = tx.execute(
+        "DELETE FROM books WHERE path NOT IN (SELECT p FROM live_paths)",
+        [],
+    )?;
+    tx.execute("DELETE FROM live_paths", [])?;
+    tx.commit()?;
+    Ok(removed)
+}
+
+pub fn get_book(conn: &Connection, id: i64) -> Result<Option<Book>> {
+    let sql = format!("SELECT {BOOK_COLS} FROM books WHERE id = ?1");
+    let b = conn.query_row(&sql, [id], row_to_book).optional()?;
+    Ok(b)
+}
+
+pub fn list_books(conn: &Connection) -> Result<Vec<Book>> {
+    let sql = format!("SELECT {BOOK_COLS} FROM books ORDER BY title COLLATE NOCASE");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], row_to_book)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Distinct non-empty categories currently in use.
+pub fn list_categories(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT category FROM books
+         WHERE category IS NOT NULL AND category <> ''
+         ORDER BY category COLLATE NOCASE",
+    )?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Apply user-edited bibliographic fields. Marks metadata as manual and, when a
+/// page count is present but words are missing, fills a word estimate.
+pub fn update_book(conn: &Connection, id: i64, e: &BookEdit, words_per_page: i64, now: i64) -> Result<()> {
+    // Derive an estimate only when the user gave pages but left words blank.
+    let (words, words_estimated) = match (e.words, e.pages) {
+        (Some(w), _) => (Some(w), false),
+        (None, Some(p)) if p > 0 => (Some(p * words_per_page.max(1)), true),
+        _ => (None, false),
+    };
+    conn.execute(
+        "UPDATE books SET
+            title=?2, author=?3, series=?4, publisher=?5, published_date=?6, language=?7,
+            isbn=?8, description=?9, category=?10, subjects=?11, pages=?12, words=?13,
+            words_estimated=?14, meta_status='manual', updated_at=?15
+         WHERE id=?1",
+        params![
+            id, e.title, e.author, e.series, e.publisher, e.published_date, e.language,
+            e.isbn, e.description, e.category, e.subjects, e.pages, words,
+            words_estimated as i64, now
+        ],
+    )?;
+    Ok(())
+}
+
+/// Set reading status, keeping started/finished timestamps and current_page in
+/// sync. Finishing a book snaps current_page to the page count.
+pub fn set_status(conn: &Connection, id: i64, status: &str, now: i64) -> Result<()> {
+    let book = get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))?;
+    match status {
+        "reading" => {
+            let started = book.started_at.unwrap_or(now);
+            conn.execute(
+                "UPDATE books SET status='reading', started_at=?2, finished_at=NULL, updated_at=?3
+                 WHERE id=?1",
+                params![id, started, now],
+            )?;
+        }
+        "finished" => {
+            let started = book.started_at.unwrap_or(now);
+            let last_page = book.pages.unwrap_or(book.current_page);
+            conn.execute(
+                "UPDATE books SET status='finished', started_at=?2, finished_at=?3,
+                    current_page=?4, updated_at=?3 WHERE id=?1",
+                params![id, started, now, last_page],
+            )?;
+        }
+        _ => {
+            // unread
+            conn.execute(
+                "UPDATE books SET status='unread', started_at=NULL, finished_at=NULL,
+                    current_page=0, updated_at=?2 WHERE id=?1",
+                params![id, now],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Update the current page. Automatically flips status to reading (from unread)
+/// or finished (when reaching the last page).
+pub fn set_progress(conn: &Connection, id: i64, current_page: i64, now: i64) -> Result<()> {
+    let book = get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))?;
+    let pages = book.pages.unwrap_or(0);
+    let cp = current_page.max(0);
+    if pages > 0 && cp >= pages {
+        set_status(conn, id, "finished", now)?;
+        return Ok(());
+    }
+    let started = book.started_at.unwrap_or(now);
+    let status = if cp > 0 { "reading".to_string() } else { book.status.clone() };
+    conn.execute(
+        "UPDATE books SET current_page=?2, status=?3, started_at=?4, updated_at=?5 WHERE id=?1",
+        params![id, cp, status, started, now],
+    )?;
+    Ok(())
+}
+
+pub fn set_rating(conn: &Connection, id: i64, rating: Option<i64>, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE books SET rating=?2, updated_at=?3 WHERE id=?1",
+        params![id, rating, now],
+    )?;
+    Ok(())
+}
+
+/// Apply fetched metadata from an Open Library candidate.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_metadata(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    author: Option<&str>,
+    publisher: Option<&str>,
+    published_date: Option<&str>,
+    isbn: Option<&str>,
+    subjects: Option<&str>,
+    description: Option<&str>,
+    pages: Option<i64>,
+    words: Option<i64>,
+    words_estimated: bool,
+    cover_path: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE books SET
+            title=?2, author=COALESCE(?3, author), publisher=COALESCE(?4, publisher),
+            published_date=COALESCE(?5, published_date), isbn=COALESCE(?6, isbn),
+            subjects=COALESCE(?7, subjects), description=COALESCE(?8, description),
+            pages=COALESCE(?9, pages), words=COALESCE(?10, words),
+            words_estimated=?11, cover_path=COALESCE(?12, cover_path),
+            meta_status='fetched', meta_source='Open Library', updated_at=?13
+         WHERE id=?1",
+        params![
+            id, title, author, publisher, published_date, isbn, subjects, description,
+            pages, words, words_estimated as i64, cover_path, now
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_book(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM books WHERE id=?1", [id])?;
+    Ok(())
+}
+
+// ---------- dashboard ----------
+
+pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
+    let one = |sql: &str| -> Result<i64> {
+        Ok(conn.query_row(sql, [], |r| r.get::<_, i64>(0))?)
+    };
+    let total_books = one("SELECT COUNT(*) FROM books")?;
+    let finished_books = one("SELECT COUNT(*) FROM books WHERE status='finished'")?;
+    let reading_books = one("SELECT COUNT(*) FROM books WHERE status='reading'")?;
+    let unread_books = one("SELECT COUNT(*) FROM books WHERE status='unread'")?;
+    let pages_read =
+        one("SELECT COALESCE(SUM(pages),0) FROM books WHERE status='finished' AND pages IS NOT NULL")?;
+    let words_read =
+        one("SELECT COALESCE(SUM(words),0) FROM books WHERE status='finished' AND words IS NOT NULL")?;
+
+    let avg_rating: Option<f64> = conn
+        .query_row(
+            "SELECT AVG(rating) FROM books WHERE rating IS NOT NULL",
+            [],
+            |r| r.get::<_, Option<f64>>(0),
+        )
+        .optional()?
+        .flatten();
+
+    // Category rollup (books without a category grouped under "Uncategorized").
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(category,''), 'Uncategorized') AS cat,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status='finished' THEN 1 ELSE 0 END) AS finished
+         FROM books GROUP BY cat ORDER BY total DESC, cat COLLATE NOCASE",
+    )?;
+    let categories = stmt
+        .query_map([], |r| {
+            Ok(CategoryStat {
+                name: r.get(0)?,
+                total: r.get(1)?,
+                finished: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    let recent_finished = query_books(
+        conn,
+        "WHERE status='finished' ORDER BY finished_at DESC LIMIT 6",
+    )?;
+    let in_progress = query_books(
+        conn,
+        "WHERE status='reading' ORDER BY updated_at DESC LIMIT 8",
+    )?;
+
+    Ok(DashboardStats {
+        total_books,
+        finished_books,
+        reading_books,
+        unread_books,
+        pages_read,
+        words_read,
+        avg_rating,
+        categories,
+        recent_finished,
+        in_progress,
+    })
+}
+
+fn query_books(conn: &Connection, tail: &str) -> Result<Vec<Book>> {
+    let sql = format!("SELECT {BOOK_COLS} FROM books {tail}");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], row_to_book)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Convenience used by commands after a mutation to hand the fresh row back.
+pub fn require_book(conn: &Connection, id: i64) -> Result<Book> {
+    get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))
+}

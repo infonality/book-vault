@@ -1,0 +1,168 @@
+//! Filesystem scanner: walks the books root, extracts metadata from every
+//! supported file, caches embedded covers, and registers each book in the
+//! library. Books whose files have disappeared are pruned.
+
+use std::path::Path;
+
+use anyhow::Result;
+use rusqlite::Connection;
+use walkdir::WalkDir;
+
+use crate::covers;
+use crate::db::{self, ScannedBook};
+use crate::formats;
+use crate::models::{ProgressEvent, ScanResult};
+
+/// Turn a filename stem into a friendly default title when the file carries no
+/// embedded title of its own.
+pub fn clean_name(stem: &str) -> String {
+    let out = stem.replace(['_', '.'], " ");
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn scan(
+    conn: &Connection,
+    books_root: &Path,
+    covers_dir: &Path,
+    words_per_page: i64,
+    mut progress: impl FnMut(ProgressEvent),
+) -> Result<ScanResult> {
+    let mut result = ScanResult::default();
+
+    if !books_root.is_dir() {
+        anyhow::bail!("Books path does not exist or is not a folder: {}", books_root.display());
+    }
+
+    progress(ProgressEvent {
+        job: "scan".into(),
+        current: 0,
+        total: 0,
+        message: "Discovering book files…".into(),
+        done: false,
+    });
+
+    // 1. Discover candidate files.
+    let mut candidates: Vec<(std::path::PathBuf, &'static str)> = Vec::new();
+    let mut live_paths: Vec<String> = Vec::new();
+    for entry in WalkDir::new(books_root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(fmt) = formats::detect_format(path) {
+            live_paths.push(path.to_string_lossy().to_string());
+            candidates.push((path.to_path_buf(), fmt));
+        }
+    }
+    result.total = candidates.len();
+    let total = candidates.len();
+
+    // 2. Extract + register each candidate.
+    let now = now_ts();
+    for (i, (path, fmt)) in candidates.iter().enumerate() {
+        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
+
+        progress(ProgressEvent {
+            job: "scan".into(),
+            current: i,
+            total,
+            message: format!("Reading {filename}"),
+            done: false,
+        });
+
+        let meta = formats::extract(path, fmt, words_per_page);
+        let has_embedded_title = meta.title.as_deref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+        let title = match &meta.title {
+            Some(t) if !t.trim().is_empty() => t.clone(),
+            _ => clean_name(&stem),
+        };
+
+        let scanned = ScannedBook {
+            path: path.to_string_lossy().to_string(),
+            filename,
+            format: (*fmt).to_string(),
+            size,
+            title,
+            author: meta.author.clone(),
+            publisher: meta.publisher.clone(),
+            published_date: meta.published_date.clone(),
+            language: meta.language.clone(),
+            isbn: meta.isbn.clone(),
+            description: meta.description.clone(),
+            subjects: meta.subjects.clone(),
+            cover_path: None,
+            pages: meta.pages,
+            words: meta.words,
+            words_estimated: meta.words_estimated,
+            meta_status: if has_embedded_title { "embedded".into() } else { "none".into() },
+        };
+
+        let (id, inserted) = db::upsert_scanned(conn, &scanned, now)?;
+        if inserted {
+            result.added += 1;
+        } else {
+            result.updated += 1;
+        }
+
+        // Ensure the book has a usable cover. We (re)generate from the file
+        // whenever the current cover is missing or looks broken (e.g. a tiny 1x1
+        // spacer, as Open Library returns for books with no cover). A cover that
+        // is already a real image — including one the user fetched online — is
+        // left untouched.
+        let cover_path: Option<String> = conn
+            .query_row("SELECT cover_path FROM books WHERE id=?1", [id], |r| r.get(0))
+            .unwrap_or_default();
+        if !cover_is_usable(cover_path.as_deref()) {
+            // Prefer an embedded cover; for PDFs (which have none) render page 1.
+            let mut new_cover: Option<String> = None;
+            if let Some(cover) = &meta.cover {
+                new_cover = covers::store_bytes(covers_dir, id, &cover.bytes, &cover.ext).ok();
+            }
+            if new_cover.is_none() && *fmt == "pdf" {
+                new_cover = crate::pdfcover::render_cover(path, covers_dir, id).ok();
+            }
+            if let Some(cp) = new_cover {
+                let _ = conn.execute(
+                    "UPDATE books SET cover_path=?2 WHERE id=?1",
+                    rusqlite::params![id, cp],
+                );
+            }
+        }
+    }
+
+    // 3. Prune books whose files vanished.
+    result.removed = db::delete_missing(conn, &live_paths)?;
+
+    progress(ProgressEvent {
+        job: "scan".into(),
+        current: total,
+        total,
+        message: format!(
+            "Scan complete — {} added, {} updated, {} removed",
+            result.added, result.updated, result.removed
+        ),
+        done: true,
+    });
+    Ok(result)
+}
+
+/// Whether a stored cover file exists and is large enough to be a real image
+/// (some ebooks ship a tiny 1x1 spacer that we don't want to keep as a cover).
+fn cover_is_usable(cover_path: Option<&str>) -> bool {
+    const MIN_COVER_BYTES: u64 = 2048;
+    match cover_path {
+        Some(p) if !p.is_empty() => std::fs::metadata(p)
+            .map(|m| m.len() >= MIN_COVER_BYTES)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+pub fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}

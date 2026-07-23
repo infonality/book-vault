@@ -1,0 +1,52 @@
+[package]
+name = "bookvault"
+version = "0.1.0"
+description = "Book Vault - personal ebook library & reading tracker"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the lib name unique so it won't conflict with the bin
+# name (a Windows-specific cargo issue, see rust-lang/cargo#8519).
+name = "bookvault_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# async + http (Open Library metadata + cover downloads)
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# filesystem scanning
+walkdir = "2"
+
+# format parsing
+zip = { version = "2", default-features = false, features = ["deflate"] }   # epub containers
+quick-xml = "0.36"                                                          # epub OPF / xhtml
+lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] }  # pdf metadata + page count
+
+# pdf first-page cover rendering (PDFium; needs pdfium.dll alongside the app)
+pdfium-render = { version = "0.8", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# errors / util
+anyhow = "1"
+once_cell = "1"
+urlencoding = "2"
+
+[profile.dev]
+opt-level = 1
+# Disabled to avoid an intermittent Windows/MSVC incremental-link bug
+# during tauri-dev rebuilds.
+incremental = false

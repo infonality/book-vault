@@ -1,0 +1,189 @@
+// Typed wrappers around the Rust command surface.
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+
+export type Status = "unread" | "reading" | "finished";
+
+export interface Book {
+  id: number;
+  path: string;
+  filename: string;
+  format: string;
+  size: number;
+  title: string;
+  author: string | null;
+  series: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  language: string | null;
+  isbn: string | null;
+  description: string | null;
+  category: string | null;
+  subjects: string | null;
+  cover_path: string | null;
+  pages: number | null;
+  words: number | null;
+  words_estimated: boolean;
+  status: Status;
+  current_page: number;
+  rating: number | null;
+  meta_status: string; // none | embedded | fetched | manual
+  meta_source: string | null;
+  started_at: number | null;
+  finished_at: number | null;
+  added_at: number;
+  updated_at: number;
+}
+
+/** Fields the detail drawer can edit directly. */
+export interface BookEdit {
+  title: string;
+  author: string | null;
+  series: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  language: string | null;
+  isbn: string | null;
+  description: string | null;
+  category: string | null;
+  subjects: string | null;
+  pages: number | null;
+  words: number | null;
+}
+
+export interface Settings {
+  books_root: string;
+  words_per_page: number;
+}
+
+export interface CategoryStat {
+  name: string;
+  total: number;
+  finished: number;
+}
+
+export interface DashboardStats {
+  total_books: number;
+  finished_books: number;
+  reading_books: number;
+  unread_books: number;
+  pages_read: number;
+  words_read: number;
+  avg_rating: number | null;
+  categories: CategoryStat[];
+  recent_finished: Book[];
+  in_progress: Book[];
+}
+
+export interface MetaCandidate {
+  title: string;
+  author: string | null;
+  year: number | null;
+  pages: number | null;
+  publisher: string | null;
+  isbn: string | null;
+  subjects: string | null;
+  cover_url: string | null;
+  work_key: string | null;
+}
+
+export interface ScanResult {
+  added: number;
+  updated: number;
+  removed: number;
+  total: number;
+}
+
+/** Popular preset shelves/genres offered in the category picker. */
+export const POPULAR_CATEGORIES: string[] = [
+  "Fiction",
+  "Non-Fiction",
+  "Science Fiction",
+  "Fantasy",
+  "Mystery",
+  "Thriller",
+  "Romance",
+  "Horror",
+  "Historical Fiction",
+  "Biography",
+  "Memoir",
+  "History",
+  "Science",
+  "Technology",
+  "Business",
+  "Self-Help",
+  "Philosophy",
+  "Psychology",
+  "Poetry",
+  "Classics",
+  "Young Adult",
+  "Children's",
+  "Graphic Novels",
+  "Cookbook",
+  "Travel",
+  "Religion & Spirituality",
+  "Politics",
+  "Reference",
+  "Education",
+  "To Read",
+  "Favorites",
+];
+
+export interface ProgressEvent {
+  job: string;
+  current: number;
+  total: number;
+  message: string;
+  done: boolean;
+}
+
+export const api = {
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
+
+  listBooks: () => invoke<Book[]>("list_books"),
+  getBook: (id: number) => invoke<Book | null>("get_book", { id }),
+  listCategories: () => invoke<string[]>("list_categories"),
+  dashboardStats: () => invoke<DashboardStats>("dashboard_stats"),
+
+  scanLibrary: () => invoke<ScanResult>("scan_library"),
+
+  updateBook: (id: number, edit: BookEdit) => invoke<Book>("update_book", { id, edit }),
+  setStatus: (id: number, status: Status) => invoke<Book>("set_status", { id, status }),
+  setProgress: (id: number, currentPage: number) =>
+    invoke<Book>("set_progress", { id, currentPage }),
+  setRating: (id: number, rating: number | null) => invoke<Book>("set_rating", { id, rating }),
+  deleteBook: (id: number) => invoke<void>("delete_book", { id }),
+
+  searchMetadata: (query: string) => invoke<MetaCandidate[]>("search_metadata", { query }),
+  applyMetadata: (id: number, candidate: MetaCandidate) =>
+    invoke<Book>("apply_metadata", { id, candidate }),
+};
+
+/** Turn an absolute local file path into a URL the webview can render. */
+export function assetUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  return convertFileSrc(path);
+}
+
+/** Open the native folder picker; returns the chosen path or undefined. */
+export async function pickFolder(title?: string): Promise<string | undefined> {
+  const result = await open({ directory: true, multiple: false, title });
+  if (typeof result === "string") return result;
+  return undefined;
+}
+
+export function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** Compact number formatting for large word/page totals. */
+export function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString();
+}

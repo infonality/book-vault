@@ -1,0 +1,337 @@
+//! EPUB extraction. An EPUB is a ZIP whose `META-INF/container.xml` points at an
+//! OPF package document; the OPF carries Dublin Core metadata, a manifest of
+//! files, and a reading-order spine. We read the metadata, count words across
+//! the spine's content documents, and pull the cover image.
+
+use std::io::Read;
+
+use anyhow::{anyhow, Context, Result};
+use quick_xml::events::Event;
+use quick_xml::Reader;
+use zip::ZipArchive;
+
+use super::{clean, count_words, strip_tags, CoverImage, ExtractedMeta};
+
+/// Rough words-per-page used to derive a page estimate from a real word count.
+const WORDS_PER_PAGE: i64 = 275;
+
+type Archive = ZipArchive<std::io::BufReader<std::fs::File>>;
+
+pub fn extract(path: &std::path::Path) -> Result<ExtractedMeta> {
+    let file = std::fs::File::open(path)?;
+    let mut zip = ZipArchive::new(std::io::BufReader::new(file)).context("open epub zip")?;
+
+    let opf_path = find_opf_path(&mut zip)?;
+    let opf_xml = read_entry_string(&mut zip, &opf_path)?;
+
+    let mut meta = ExtractedMeta::default();
+    let opf = parse_opf(&opf_xml);
+
+    meta.title = opf.title.as_deref().and_then(clean);
+    meta.author = opf.author.as_deref().and_then(clean);
+    meta.publisher = opf.publisher.as_deref().and_then(clean);
+    meta.published_date = opf.date.as_deref().and_then(clean);
+    meta.language = opf.language.as_deref().and_then(clean);
+    meta.isbn = opf.isbn.as_deref().and_then(clean);
+    meta.description = opf
+        .description
+        .as_deref()
+        .map(|s| clean(&strip_tags(s)).unwrap_or_default())
+        .filter(|s| !s.is_empty());
+    if !opf.subjects.is_empty() {
+        meta.subjects = Some(opf.subjects.join(", "));
+    }
+
+    let opf_dir = parent_dir(&opf_path);
+
+    // Word count across the spine's content documents.
+    let mut words = 0i64;
+    for idref in &opf.spine {
+        let Some(item) = opf.manifest.iter().find(|i| &i.id == idref) else { continue };
+        let is_content = item.media_type.contains("xhtml")
+            || item.media_type.contains("html")
+            || item.href.ends_with(".xhtml")
+            || item.href.ends_with(".html")
+            || item.href.ends_with(".htm");
+        if !is_content {
+            continue;
+        }
+        let entry = resolve(&opf_dir, &item.href);
+        if let Ok(html) = read_entry_string(&mut zip, &entry) {
+            words += count_words(&strip_tags(&html));
+        }
+    }
+    if words > 0 {
+        meta.words = Some(words);
+        meta.words_estimated = false;
+        // EPUBs have no fixed pagination; estimate for progress tracking.
+        meta.pages = Some(((words + WORDS_PER_PAGE - 1) / WORDS_PER_PAGE).max(1));
+    }
+
+    // Cover image.
+    if let Some(href) = cover_href(&opf) {
+        let entry = resolve(&opf_dir, &href);
+        if let Ok(bytes) = read_entry_bytes(&mut zip, &entry) {
+            if !bytes.is_empty() {
+                meta.cover = Some(CoverImage { bytes, ext: image_ext(&href) });
+            }
+        }
+    }
+
+    Ok(meta)
+}
+
+// ---------- OPF parsing ----------
+
+#[derive(Default)]
+struct ManifestItem {
+    id: String,
+    href: String,
+    media_type: String,
+    properties: String,
+}
+
+#[derive(Default)]
+struct Opf {
+    title: Option<String>,
+    author: Option<String>,
+    publisher: Option<String>,
+    date: Option<String>,
+    language: Option<String>,
+    isbn: Option<String>,
+    description: Option<String>,
+    subjects: Vec<String>,
+    manifest: Vec<ManifestItem>,
+    spine: Vec<String>,
+    /// `<meta name="cover" content="ID"/>` (epub2 cover pointer).
+    cover_meta_id: Option<String>,
+}
+
+fn parse_opf(xml: &str) -> Opf {
+    let mut opf = Opf::default();
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    // Which dc: element's text we're currently collecting.
+    let mut cur: Option<&'static str> = None;
+    // Whether the current dc:identifier looks like an ISBN.
+    let mut ident_is_isbn = false;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = e.name();
+                match name.as_ref() {
+                    b"dc:title" | b"title" => cur = Some("title"),
+                    b"dc:creator" | b"creator" => {
+                        if opf.author.is_none() {
+                            cur = Some("author");
+                        }
+                    }
+                    b"dc:publisher" | b"publisher" => cur = Some("publisher"),
+                    b"dc:date" | b"date" => {
+                        if opf.date.is_none() {
+                            cur = Some("date");
+                        }
+                    }
+                    b"dc:language" | b"language" => cur = Some("language"),
+                    b"dc:description" | b"description" => cur = Some("description"),
+                    b"dc:subject" | b"subject" => cur = Some("subject"),
+                    b"dc:identifier" | b"identifier" => {
+                        cur = Some("identifier");
+                        ident_is_isbn = attr(&e, b"opf:scheme")
+                            .or_else(|| attr(&e, b"scheme"))
+                            .map(|s| s.to_ascii_lowercase().contains("isbn"))
+                            .unwrap_or(false);
+                    }
+                    b"item" => opf.manifest.push(read_manifest_item(&e)),
+                    b"meta" => read_meta(&e, &mut opf),
+                    b"itemref" => {
+                        if let Some(idref) = attr(&e, b"idref") {
+                            opf.spine.push(idref);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Some producers emit manifest items / metas as self-closing tags.
+            Ok(Event::Empty(e)) => match e.name().as_ref() {
+                b"item" => opf.manifest.push(read_manifest_item(&e)),
+                b"meta" => read_meta(&e, &mut opf),
+                b"itemref" => {
+                    if let Some(idref) = attr(&e, b"idref") {
+                        opf.spine.push(idref);
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Text(t)) => {
+                if let Some(field) = cur {
+                    let text = t.unescape().unwrap_or_default().to_string();
+                    store_dc(&mut opf, field, &text, ident_is_isbn);
+                }
+            }
+            Ok(Event::End(_)) => cur = None,
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    opf
+}
+
+fn store_dc(opf: &mut Opf, field: &str, text: &str, ident_is_isbn: bool) {
+    match field {
+        "title" if opf.title.is_none() => opf.title = Some(text.to_string()),
+        "author" => opf.author = Some(text.to_string()),
+        "publisher" if opf.publisher.is_none() => opf.publisher = Some(text.to_string()),
+        "date" => opf.date = Some(text.to_string()),
+        "language" if opf.language.is_none() => opf.language = Some(text.to_string()),
+        "description" if opf.description.is_none() => opf.description = Some(text.to_string()),
+        "subject" => {
+            if !text.trim().is_empty() {
+                opf.subjects.push(text.trim().to_string());
+            }
+        }
+        "identifier" => {
+            let digits: String = text.chars().filter(|c| c.is_ascii_digit() || *c == 'X').collect();
+            let looks_isbn = ident_is_isbn || digits.len() == 10 || digits.len() == 13;
+            if opf.isbn.is_none() && looks_isbn && !digits.is_empty() {
+                opf.isbn = Some(digits);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn read_manifest_item(e: &quick_xml::events::BytesStart) -> ManifestItem {
+    ManifestItem {
+        id: attr(e, b"id").unwrap_or_default(),
+        href: attr(e, b"href").unwrap_or_default(),
+        media_type: attr(e, b"media-type").unwrap_or_default(),
+        properties: attr(e, b"properties").unwrap_or_default(),
+    }
+}
+
+fn read_meta(e: &quick_xml::events::BytesStart, opf: &mut Opf) {
+    // epub2 cover pointer: <meta name="cover" content="cover-id"/>
+    if attr(e, b"name").as_deref() == Some("cover") {
+        if let Some(content) = attr(e, b"content") {
+            opf.cover_meta_id = Some(content);
+        }
+    }
+}
+
+fn cover_href(opf: &Opf) -> Option<String> {
+    // epub3: manifest item flagged properties="cover-image".
+    if let Some(item) = opf
+        .manifest
+        .iter()
+        .find(|i| i.properties.split_whitespace().any(|p| p == "cover-image"))
+    {
+        return Some(item.href.clone());
+    }
+    // epub2: manifest item whose id matches the cover meta pointer.
+    if let Some(id) = &opf.cover_meta_id {
+        if let Some(item) = opf.manifest.iter().find(|i| &i.id == id) {
+            return Some(item.href.clone());
+        }
+    }
+    // Last resort: any image whose id/href hints at "cover".
+    opf.manifest
+        .iter()
+        .find(|i| {
+            i.media_type.starts_with("image/")
+                && (i.id.to_ascii_lowercase().contains("cover")
+                    || i.href.to_ascii_lowercase().contains("cover"))
+        })
+        .map(|i| i.href.clone())
+}
+
+fn attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<String> {
+    e.attributes().flatten().find(|a| a.key.as_ref() == key).map(|a| {
+        a.unescape_value().map(|v| v.to_string()).unwrap_or_default()
+    })
+}
+
+// ---------- zip helpers ----------
+
+fn find_opf_path(zip: &mut Archive) -> Result<String> {
+    let container = read_entry_string(zip, "META-INF/container.xml")?;
+    let mut reader = Reader::from_str(&container);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.name().as_ref() == b"rootfile" => {
+                if let Some(fp) = attr(&e, b"full-path") {
+                    return Ok(fp);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Err(anyhow!("no rootfile in container.xml"))
+}
+
+fn read_entry_bytes(zip: &mut Archive, name: &str) -> Result<Vec<u8>> {
+    let decoded = urlencoding::decode(name).map(|c| c.into_owned()).unwrap_or_else(|_| name.to_string());
+    // Try the exact name, then a URL-decoded variant.
+    for candidate in [name.to_string(), decoded] {
+        if let Ok(mut f) = zip.by_name(&candidate) {
+            let mut out = Vec::new();
+            f.read_to_end(&mut out)?;
+            return Ok(out);
+        }
+    }
+    Err(anyhow!("entry not found: {name}"))
+}
+
+fn read_entry_string(zip: &mut Archive, name: &str) -> Result<String> {
+    let bytes = read_entry_bytes(zip, name)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+// ---------- path helpers ----------
+
+fn parent_dir(path: &str) -> String {
+    match path.rfind('/') {
+        Some(i) => path[..i].to_string(),
+        None => String::new(),
+    }
+}
+
+/// Resolve an OPF-relative href to a zip entry path, collapsing `.`/`..`.
+fn resolve(base_dir: &str, href: &str) -> String {
+    let href = href.split(['#', '?']).next().unwrap_or(href);
+    let combined = if base_dir.is_empty() {
+        href.to_string()
+    } else {
+        format!("{base_dir}/{href}")
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in combined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
+}
+
+fn image_ext(href: &str) -> String {
+    let lower = href.to_ascii_lowercase();
+    for ext in ["jpg", "jpeg", "png", "gif", "webp", "svg"] {
+        if lower.ends_with(&format!(".{ext}")) {
+            return if ext == "jpeg" { "jpg".into() } else { ext.into() };
+        }
+    }
+    "jpg".into()
+}

@@ -1,0 +1,18 @@
+# dependencies
+node_modules
+dist
+dist-ssr
+
+# rust / tauri
+src-tauri/target
+
+# PDFium native library — fetched per-OS in CI (see README); kept out of git
+src-tauri/pdfium.dll
+src-tauri/libpdfium.dylib
+src-tauri/libpdfium.so
+
+# logs & misc
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json

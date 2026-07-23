@@ -1,0 +1,12 @@
+# Normalize text files to LF in the repo; check out native on each OS.
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.icns binary
+*.epub binary
+*.pdf binary
+*.dll binary
+*.dylib binary
+*.so binary
