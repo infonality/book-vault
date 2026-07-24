@@ -70,7 +70,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur">
         <div className="flex items-center gap-2.5 px-5 py-5">
-          <Logo className="h-9 w-9 shrink-0 rounded-lg shadow-lg shadow-teal-900/40" />
+          <Logo className="h-9 w-9 shrink-0 rounded-lg shadow-lg shadow-violet-950/40" />
           <div>
             <div className="text-sm font-semibold leading-tight">Book Vault</div>
             <div className="text-[11px] text-slate-500">Reading tracker</div>

@@ -129,28 +129,22 @@ export function Icon({
   );
 }
 
-/** Bookmark silhouette shared by the app icon and the in-app logo. */
-const MARK =
-  "M 302,240 A 60,60 0 0 1 362,180 L 662,180 A 60,60 0 0 1 722,240 " +
-  "L 722,864 L 512,700 L 302,864 Z";
-
 /** The Book Vault mark — mirrors the app icon (see app-icon.svg). */
 export function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 1024 1024" className={className} xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="bv-tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#2dd4bf" />
-          <stop offset="0.55" stopColor="#14b8a6" />
-          <stop offset="1" stopColor="#0f766e" />
+          <stop offset="0" stopColor="#3b0764" />
+          <stop offset="0.55" stopColor="#240a45" />
+          <stop offset="1" stopColor="#12031f" />
         </linearGradient>
-        <clipPath id="bv-mark">
-          <path d={MARK} />
-        </clipPath>
       </defs>
       <rect width="1024" height="1024" rx="225" fill="url(#bv-tile)" />
-      <path d={MARK} fill="#f59e0b" />
-      <rect x="290" y="160" width="444" height="400" fill="#ffffff" clipPath="url(#bv-mark)" />
+      <rect x="252" y="282" width="150" height="530" rx="40" fill="#ede9fe" />
+      <rect x="437" y="242" width="150" height="570" rx="40" fill="#a78bfa" />
+      <rect x="622" y="282" width="150" height="530" rx="40" fill="#ede9fe"
+            transform="rotate(13 697 812)" />
     </svg>
   );
 }
