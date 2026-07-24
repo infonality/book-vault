@@ -1,90 +1,145 @@
-# Book Vault
+<p align="center">
+  <img src="docs/banner.png" alt="Book Vault — your ebook library, catalogued and tracked" width="100%">
+</p>
 
-A personal ebook library and reading tracker, built with **Tauri 2** (Rust core + React/TypeScript UI). Point it at a folder of books and it indexes them, extracts metadata, tracks your reading progress and ratings, and shows a dashboard of what you've read.
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-a78bfa?style=flat-square" alt="MIT license">
+  <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-a78bfa?style=flat-square" alt="Platforms">
+  <img src="https://img.shields.io/badge/built%20with-Tauri%202-a78bfa?style=flat-square" alt="Built with Tauri 2">
+  <img src="https://img.shields.io/badge/data-100%25%20local-a78bfa?style=flat-square" alt="100% local">
+</p>
 
-Sibling project to Retro Vault — same architecture, applied to books instead of ROMs.
+Point Book Vault at a folder of ebooks and it builds you a proper library: it reads
+the metadata out of each file, fetches cover art and page counts for anything
+missing, and then tracks what you've read.
+
+Everything stays on your machine — a single SQLite file and a folder of cached
+covers. There's no account, no sync, and no telemetry.
+
+---
 
 ## Features
 
-- **Library scan** — point at a folder; it walks it (subfolders included) and indexes every `.epub`, `.pdf`, `.mobi`, `.azw`, and `.azw3`.
-- **Metadata extraction** — pulls title, author, publisher, subjects, ISBN, description, cover art, page count, and word count straight from each file:
-  - **EPUB** — full OPF/Dublin-Core metadata, real word count measured from the text, embedded cover.
-  - **PDF** — Info dictionary (title/author/keywords) and real page count; word count estimated from pages. The first page is rendered to a cover image via PDFium.
-  - **MOBI / AZW** — title, author, publisher, ISBN, subjects from the EXTH header; size metrics estimated.
-- **Online metadata** — from a book's detail panel, search **Open Library** (free, no API key) for a richer match: cover, page count, subjects, description. Pick from candidates, or if nothing matches, just type the details in and save.
-  - _Note:_ Goodreads retired its public API in 2020, so Open Library stands in as the fetch source.
-- **Reading tracker** — a sortable table of every book with status (unread / reading / finished), a progress bar, page position, and a 1–5 star ranking. Categorize books onto shelves.
-- **Dashboard** — books read, pages read, words read (summed from finished books), currently-reading list, a by-category breakdown, and recently-finished covers.
+**Scans a folder, understands the files**
+Walks a directory (subfolders included) and indexes every `.epub`, `.pdf`,
+`.mobi`, `.azw`, and `.azw3`, reading title, author, publisher, subjects, ISBN,
+description, page count, and word count out of the file itself.
 
-## How metrics are counted
+**Finds covers, even when the file has none**
+EPUB and MOBI covers are lifted straight from the file. PDFs don't carry one, so
+the first page is rendered into a cover image instead.
 
-- **Pages read / words read** on the dashboard sum the `pages` / `words` of every book marked **finished**.
-- EPUB word counts are exact. PDF and MOBI word counts are estimated (see _Words per page_ in Settings) and shown with a `~`. Every value is editable in a book's detail panel.
+**Fills the gaps online**
+Anything still missing can be looked up on [Open Library](https://openlibrary.org) —
+cover, page count, subjects, description — from a list of candidate matches. No
+API key needed. If nothing matches, type the details in yourself.
 
-## Running it
+**Tracks your reading**
+A sortable table of every book with reading status, page progress, a 1–5 star
+rating, and free-text categories with a preset picker.
 
-Prerequisites: Node.js and the Rust toolchain (with the Tauri 2 system dependencies).
+**Shows you the numbers**
+A dashboard totalling books, pages, and words read, what you're part-way through,
+and a breakdown by category.
 
-PDF cover rendering needs the **PDFium** shared library, which is platform-specific and kept out of git. Drop the right one into `src-tauri/` before building (CI does this automatically per-OS):
+## Install
 
-| OS | File | Source asset ([bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)) |
-| --- | --- | --- |
-| Windows | `src-tauri/pdfium.dll` | `pdfium-win-x64.tgz` → `bin/pdfium.dll` |
-| macOS | `src-tauri/libpdfium.dylib` | `pdfium-mac-univ.tgz` → `lib/libpdfium.dylib` |
-| Linux | `src-tauri/libpdfium.so` | `pdfium-linux-x64.tgz` → `lib/libpdfium.so` |
+Grab the installer for your platform from the
+[latest release](https://github.com/infonality/book-vault/releases/latest).
 
-If the library is missing, the app still runs — PDF covers just fall back to a placeholder.
+| Platform | File |
+| --- | --- |
+| Windows | `.msi`, or `.exe` (NSIS installer) |
+| macOS | `.dmg` (universal — Apple Silicon and Intel) |
+| Linux | `.deb`, `.rpm`, or `.AppImage` |
+
+The builds aren't code-signed, so the first launch needs a nudge: on macOS
+right-click the app and choose **Open**; on Windows click **More info → Run
+anyway**; the AppImage needs `chmod +x` before it will run.
+
+Then open **Settings**, choose the folder your books live in, and hit **Scan
+Books**.
+
+## How the metadata works
+
+What can be read from a file varies a lot by format, so Book Vault takes what it
+can get and lets you correct the rest — every field stays editable.
+
+| Format | Metadata | Pages | Words | Cover |
+| --- | --- | --- | --- | --- |
+| EPUB | Full Dublin Core from the OPF | Estimated from word count | **Counted** from the text | Embedded |
+| PDF | Info dictionary | **Exact** page count | Estimated from pages | First page, rendered |
+| MOBI / AZW | EXTH header | Estimated | Estimated | Embedded when present |
+
+Estimated word counts are shown with a `~` and use a words-per-page figure you
+can change in Settings. Pages and words only count toward your totals once a book
+is marked finished.
+
+> **On Goodreads:** Goodreads retired its public API in 2020 and issues no new
+> keys, so there's no supported way to query it. Open Library is the stand-in —
+> it's free, needs no credentials, and covers the same ground.
+
+## Building from source
+
+You'll need [Node.js](https://nodejs.org) and the
+[Rust toolchain](https://rustup.rs) with Tauri's
+[system dependencies](https://tauri.app/start/prerequisites/).
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-To build a distributable bundle for the current OS:
+PDF cover rendering needs the **PDFium** shared library, which is
+platform-specific and not checked in. Drop the matching file into `src-tauri/`
+(CI does this automatically for releases):
+
+| OS | File | Asset from [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries) |
+| --- | --- | --- |
+| Windows | `src-tauri/pdfium.dll` | `pdfium-win-x64.tgz` → `bin/pdfium.dll` |
+| macOS | `src-tauri/libpdfium.dylib` | `pdfium-mac-univ.tgz` → `lib/libpdfium.dylib` |
+| Linux | `src-tauri/libpdfium.so` | `pdfium-linux-x64.tgz` → `lib/libpdfium.so` |
+
+Without it the app still runs; PDFs just fall back to a placeholder cover.
+
+To build an installer for your current OS:
 
 ```bash
 npm run tauri build
 ```
 
-The library database and cached cover images live in the platform app-data directory (`library.db` + `covers/`).
+Want something to test against? `sample_books/` has a generated EPUB and PDF —
+point Settings at it and scan. Regenerate them with
+`cd src-tauri && cargo run --example make_sample`.
 
-## Releases (Windows, macOS, Linux)
+## Releases
 
-Tauri can't cross-compile, so multi-platform installers are built in CI. The
-[`release.yml`](.github/workflows/release.yml) workflow builds native installers
-on Windows, macOS, and Linux runners (fetching the right PDFium library for each)
-and attaches them to a **draft** GitHub Release. Cut a release by pushing a tag:
+Tauri can't cross-compile, so installers are built in CI on native runners for
+each OS. Pushing a version tag builds all three and attaches them to a draft
+release:
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Artifacts produced: `.msi` + NSIS `.exe` (Windows), `.dmg` (macOS universal),
-`.deb` / `.rpm` / `.AppImage` (Linux). Review the draft Release, then publish.
-
-## Trying it out
-
-A tiny sample book (`sample_books/The Time Machine.epub`) is included. Set your books folder to `sample_books/` in Settings, then click **Scan Books**. Regenerate it with:
-
-```bash
-cd src-tauri && cargo run --example make_sample
-```
-
 ## Project layout
 
 ```
-src/                     React UI
-  api.ts                 typed wrappers over the Tauri command surface
-  ui.tsx                 shared primitives (icons, buttons, star rating)
-  pages/                 Dashboard, Library (table + detail drawer), Settings
+src/                    React + TypeScript UI
+  api.ts                typed wrappers over the Tauri command surface
+  ui.tsx                shared primitives (icons, buttons, star rating)
+  pages/                Dashboard, Library (table + detail drawer), Settings
 src-tauri/src/
-  commands.rs            Tauri IPC boundary
-  db.rs                  SQLite schema + queries
-  scanner.rs             folder walk + registration
-  formats/               epub / pdf / mobi metadata extraction
-  metadata.rs            Open Library search + cover download
-  covers.rs              cover-image cache
+  commands.rs           Tauri IPC boundary
+  db.rs                 SQLite schema and queries
+  scanner.rs            folder walk, registration, cover refresh
+  formats/              epub / pdf / mobi metadata extraction
+  pdfcover.rs           PDF first-page rendering via PDFium
+  metadata.rs           Open Library search and cover download
 ```
+
+Your library lives in the platform app-data directory — `library.db` plus a
+`covers/` folder. Book Vault never modifies the ebook files themselves.
 
 ## Tests
 

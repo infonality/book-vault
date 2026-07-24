@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" width="1280" height="420">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b0764"/>
+      <stop offset="0.55" stop-color="#240a45"/>
+      <stop offset="1" stop-color="#12031f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.1" r="0.75">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b0764"/>
+      <stop offset="0.55" stop-color="#240a45"/>
+      <stop offset="1" stop-color="#12031f"/>
+    </linearGradient>
+    <g id="mark">
+      <rect width="1024" height="1024" rx="225" fill="url(#tile)"/>
+      <rect x="252" y="282" width="150" height="530" rx="40" fill="#ede9fe"/>
+      <rect x="437" y="242" width="150" height="570" rx="40" fill="#a78bfa"/>
+      <rect x="622" y="282" width="150" height="530" rx="40" fill="#ede9fe" transform="rotate(13 697 812)"/>
+    </g>
+  </defs>
+
+  <rect width="1280" height="420" fill="url(#bg)"/>
+  <rect width="1280" height="420" fill="url(#glow)"/>
+
+  <g opacity="0.10" fill="#ede9fe">
+    <rect x="946" y="150" width="46" height="210" rx="14"/>
+    <rect x="1006" y="112" width="46" height="248" rx="14"/>
+    <rect x="1066" y="168" width="46" height="192" rx="14"/>
+    <rect x="1126" y="132" width="46" height="228" rx="14" transform="rotate(11 1149 360)"/>
+  </g>
+
+  <g transform="translate(96 132) scale(0.15234)">
+    <use href="#mark"/>
+  </g>
+
+  <text x="272" y="212" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="76" font-weight="600" fill="#f5f3ff" letter-spacing="-1.5">Book Vault</text>
+  <text x="274" y="262" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="27" font-weight="400" fill="#c4b5fd">Your ebook library, catalogued and tracked.</text>
+
+  <g font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" fill="#a78bfa">
+    <text x="274" y="318">EPUB · PDF · MOBI</text>
+    <text x="470" y="318" fill="#6d5a99">|</text>
+    <text x="492" y="318">Offline &amp; local</text>
+    <text x="640" y="318" fill="#6d5a99">|</text>
+    <text x="662" y="318">Windows · macOS · Linux</text>
+  </g>
+</svg>
