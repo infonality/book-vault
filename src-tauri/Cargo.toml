@@ -1,9 +1,10 @@
 [package]
 name = "bookvault"
-version = "0.1.0"
+version = "0.1.1"
 description = "Book Vault - personal ebook library & reading tracker"
-authors = ["you"]
+authors = ["Kas"]
 edition = "2021"
+license = "MIT"
 
 [lib]
 # The `_lib` suffix keeps the lib name unique so it won't conflict with the bin

@@ -91,3 +91,7 @@ src-tauri/src/
 ```bash
 cd src-tauri && cargo test
 ```
+
+## License
+
+[MIT](LICENSE) © Kas
