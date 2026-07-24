@@ -129,6 +129,11 @@ export function Icon({
   );
 }
 
+/** Bookmark silhouette shared by the app icon and the in-app logo. */
+const MARK =
+  "M 302,240 A 60,60 0 0 1 362,180 L 662,180 A 60,60 0 0 1 722,240 " +
+  "L 722,864 L 512,700 L 302,864 Z";
+
 /** The Book Vault mark — mirrors the app icon (see app-icon.svg). */
 export function Logo({ className }: { className?: string }) {
   return (
@@ -139,18 +144,13 @@ export function Logo({ className }: { className?: string }) {
           <stop offset="0.55" stopColor="#14b8a6" />
           <stop offset="1" stopColor="#0f766e" />
         </linearGradient>
+        <clipPath id="bv-mark">
+          <path d={MARK} />
+        </clipPath>
       </defs>
       <rect width="1024" height="1024" rx="225" fill="url(#bv-tile)" />
-      <rect x="236" y="192" width="120" height="640" rx="30" fill="#f59e0b" />
-      <rect x="286" y="192" width="500" height="640" rx="32" fill="#ffffff" />
-      <g stroke="#0f172a" strokeWidth="38" strokeLinecap="round" fill="none">
-        <line x1="571.4" y1="547.4" x2="677.4" y2="653.4" />
-        <line x1="500.6" y1="547.4" x2="394.6" y2="653.4" />
-        <line x1="500.6" y1="476.6" x2="394.6" y2="370.6" />
-        <line x1="571.4" y1="476.6" x2="677.4" y2="370.6" />
-      </g>
-      <circle cx="536" cy="512" r="150" fill="none" stroke="#0f172a" strokeWidth="44" />
-      <circle cx="536" cy="512" r="56" fill="#f59e0b" stroke="#0f172a" strokeWidth="16" />
+      <path d={MARK} fill="#f59e0b" />
+      <rect x="290" y="160" width="444" height="400" fill="#ffffff" clipPath="url(#bv-mark)" />
     </svg>
   );
 }

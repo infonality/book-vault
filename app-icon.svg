@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- Book Vault app icon: a book with a gilded spine, sealed with a vault wheel.
-       Shapes are kept few and heavy so the mark still reads at 32px. -->
+  <!-- Book Vault app icon.
+       A single bookmark silhouette, split into two tones, with a deep V notch
+       (V for Vault). One shape, no strokes, so it stays legible at 16px. -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#2dd4bf"/>
@@ -11,28 +12,17 @@
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
       <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
+    <clipPath id="mark">
+      <path d="M 302,240 A 60,60 0 0 1 362,180 L 662,180 A 60,60 0 0 1 722,240
+               L 722,864 L 512,700 L 302,864 Z"/>
+    </clipPath>
   </defs>
 
-  <!-- Tile -->
   <rect width="1024" height="1024" rx="225" fill="url(#tile)"/>
   <rect width="1024" height="1024" rx="225" fill="url(#gloss)"/>
 
-  <!-- Gilded spine, left only: the asymmetry is what makes this read as a book -->
-  <rect x="236" y="192" width="120" height="640" rx="30" fill="#f59e0b"/>
-
-  <!-- Front cover -->
-  <rect x="286" y="192" width="500" height="640" rx="32" fill="#ffffff"/>
-
-  <!-- Hinge, just inside the cover -->
-  <rect x="322" y="238" width="9" height="548" rx="4.5" fill="#e2e8f0"/>
-
-  <!-- Vault wheel: four heavy spokes through a thick ring -->
-  <g stroke="#0f172a" stroke-width="38" stroke-linecap="round" fill="none">
-    <line x1="571.4" y1="547.4" x2="677.4" y2="653.4"/>
-    <line x1="500.6" y1="547.4" x2="394.6" y2="653.4"/>
-    <line x1="500.6" y1="476.6" x2="394.6" y2="370.6"/>
-    <line x1="571.4" y1="476.6" x2="677.4" y2="370.6"/>
-  </g>
-  <circle cx="536" cy="512" r="150" fill="none" stroke="#0f172a" stroke-width="44"/>
-  <circle cx="536" cy="512" r="56" fill="#f59e0b" stroke="#0f172a" stroke-width="16"/>
+  <!-- Bookmark: amber base, white upper section clipped to the same silhouette -->
+  <path d="M 302,240 A 60,60 0 0 1 362,180 L 662,180 A 60,60 0 0 1 722,240
+           L 722,864 L 512,700 L 302,864 Z" fill="#f59e0b"/>
+  <rect x="290" y="160" width="444" height="400" fill="#ffffff" clip-path="url(#mark)"/>
 </svg>
