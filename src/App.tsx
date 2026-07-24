@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import "./index.css";
 import { api, ProgressEvent, Settings } from "./api";
-import { Button, cx, Icon, Spinner } from "./ui";
+import { Button, cx, Icon, Logo, Spinner } from "./ui";
 import Dashboard from "./pages/Dashboard";
 import Library from "./pages/Library";
 import Settings_ from "./pages/Settings";
@@ -70,9 +70,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur">
         <div className="flex items-center gap-2.5 px-5 py-5">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-teal-500 to-amber-500 shadow-lg shadow-teal-900/40">
-            <Icon name="book" className="h-5 w-5 text-white" />
-          </div>
+          <Logo className="h-9 w-9 shrink-0 rounded-lg shadow-lg shadow-teal-900/40" />
           <div>
             <div className="text-sm font-semibold leading-tight">Book Vault</div>
             <div className="text-[11px] text-slate-500">Reading tracker</div>

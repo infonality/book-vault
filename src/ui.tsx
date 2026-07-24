@@ -129,6 +129,32 @@ export function Icon({
   );
 }
 
+/** The Book Vault mark — mirrors the app icon (see app-icon.svg). */
+export function Logo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 1024 1024" className={className} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bv-tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#2dd4bf" />
+          <stop offset="0.55" stopColor="#14b8a6" />
+          <stop offset="1" stopColor="#0f766e" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="1024" rx="225" fill="url(#bv-tile)" />
+      <rect x="236" y="192" width="120" height="640" rx="30" fill="#f59e0b" />
+      <rect x="286" y="192" width="500" height="640" rx="32" fill="#ffffff" />
+      <g stroke="#0f172a" strokeWidth="38" strokeLinecap="round" fill="none">
+        <line x1="571.4" y1="547.4" x2="677.4" y2="653.4" />
+        <line x1="500.6" y1="547.4" x2="394.6" y2="653.4" />
+        <line x1="500.6" y1="476.6" x2="394.6" y2="370.6" />
+        <line x1="571.4" y1="476.6" x2="677.4" y2="370.6" />
+      </g>
+      <circle cx="536" cy="512" r="150" fill="none" stroke="#0f172a" strokeWidth="44" />
+      <circle cx="536" cy="512" r="56" fill="#f59e0b" stroke="#0f172a" strokeWidth="16" />
+    </svg>
+  );
+}
+
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={cx("bv-spin", className)} fill="none">
