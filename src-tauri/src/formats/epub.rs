@@ -168,7 +168,7 @@ fn parse_opf(xml: &str) -> Opf {
             },
             Ok(Event::Text(t)) => {
                 if let Some(field) = cur {
-                    let text = t.unescape().unwrap_or_default().to_string();
+                    let text = t.xml10_content().unwrap_or_default().to_string();
                     store_dc(&mut opf, field, &text, ident_is_isbn);
                 }
             }
@@ -252,7 +252,9 @@ fn cover_href(opf: &Opf) -> Option<String> {
 
 fn attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<String> {
     e.attributes().flatten().find(|a| a.key.as_ref() == key).map(|a| {
-        a.unescape_value().map(|v| v.to_string()).unwrap_or_default()
+        a.normalized_value(quick_xml::XmlVersion::Explicit1_0)
+            .map(|v| v.to_string())
+            .unwrap_or_default()
     })
 }
 

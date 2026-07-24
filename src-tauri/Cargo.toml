@@ -33,8 +33,8 @@ walkdir = "2"
 
 # format parsing
 zip = { version = "2", default-features = false, features = ["deflate"] }   # epub containers
-quick-xml = "0.36"                                                          # epub OPF / xhtml
-lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] }  # pdf metadata + page count
+quick-xml = "0.41"                                                          # epub OPF / xhtml
+lopdf = { version = "0.44", default-features = false }  # pdf metadata + page count
 
 # pdf first-page cover rendering (PDFium; needs pdfium.dll alongside the app)
 pdfium-render = { version = "0.8", features = ["image"] }
