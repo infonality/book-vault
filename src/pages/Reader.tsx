@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Book, Chapter, Locator, ReaderSession } from "../api";
 import { cx, Icon, Spinner } from "../ui";
+import {
+  DEFAULT_PREFS,
+  FONT_LABELS,
+  FONT_STACKS,
+  FontChoice,
+  loadPrefs,
+  ReaderPrefs,
+  savePrefs,
+  Theme,
+  THEMES,
+} from "../reader-prefs";
 
 /**
  * Paginated EPUB reader, modelled on the presentation Books uses on macOS:
@@ -15,8 +26,6 @@ import { cx, Icon, Spinner } from "../ui";
  * would undo the protection entirely, so don't.
  */
 
-/** Page margin inside the paper, and the gutter between the two columns. */
-const PAD = 56;
 /** Width past which a second column reads better than one long line. */
 const IDEAL_COLUMN = 720;
 /** A wheel notch shouldn't fire more than one page turn. */
@@ -42,6 +51,8 @@ export default function Reader({
   const [pages, setPages] = useState(1);
   const [tocOpen, setTocOpen] = useState(false);
   const [menu, setMenu] = useState<Menu>(null);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
 
   const frameRef = useRef<HTMLIFrameElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -108,28 +119,53 @@ export default function Reader({
     if (w === 0 || h === 0) return;
 
     const cols = Math.max(1, Math.min(2, Math.floor(w / IDEAL_COLUMN)));
+    const pad = prefs.margin;
+    const t = THEMES[prefs.theme];
+
+    // Sepia and night have to force colours, because a publisher stylesheet
+    // that sets dark text would be unreadable on a dark page. Paper leaves
+    // their colours alone so the book looks as designed.
+    const recolour =
+      prefs.theme === "paper"
+        ? ""
+        : `body, body * { color:${t.fg} !important; background-color:transparent !important;
+             border-color:rgba(128,128,128,.35) !important; }
+           a, a * { color:${t.link} !important; }
+           img, svg, video { filter:${prefs.theme === "night" ? "brightness(.82)" : "none"}; }`;
+
+    // Only override the typeface when the reader has actually chosen one;
+    // "publisher" leaves the book's own @font-face and families in charge.
+    const family =
+      prefs.font === "publisher"
+        ? ""
+        : `body, body * { font-family:${FONT_STACKS[prefs.font]} !important; }`;
 
     const style = doc.getElementById("bv-layout") ?? doc.createElement("style");
     style.id = "bv-layout";
     style.textContent = `
-      html { margin:0; padding:0; height:${h}px; overflow:hidden; }
+      html { margin:0; padding:0; height:${h}px; overflow:hidden; background:${t.bg}; }
       body {
         margin:0;
-        padding:${PAD}px ${PAD}px ${PAD * 0.75}px;
+        padding:${pad}px ${pad}px ${pad * 0.75}px;
         height:${h}px;
         box-sizing:border-box;
         column-count:${cols};
-        column-gap:${PAD * 1.8}px;
+        column-gap:${pad * 1.8}px;
         column-fill:auto;
         -webkit-column-count:${cols};
-        -webkit-column-gap:${PAD * 1.8}px;
-        text-align:justify;
-        hyphens:auto;
-        -webkit-hyphens:auto;
+        -webkit-column-gap:${pad * 1.8}px;
+        text-align:${prefs.justify ? "justify" : "left"};
+        hyphens:${prefs.justify ? "auto" : "manual"};
+        -webkit-hyphens:${prefs.justify ? "auto" : "manual"};
+        background:${t.bg};
+        font-size:${prefs.size}px;
+        line-height:${prefs.lineHeight};
       }
-      img, svg, video, table { max-width:100%; max-height:${h - PAD * 2}px; height:auto; }
+      ${family}
+      ${recolour}
+      img, svg, video, table { max-width:100%; max-height:${h - pad * 2}px; height:auto; }
       h1, h2, h3, h4 { break-after:avoid; text-align:left; hyphens:none; }
-      a { text-decoration:none; border-bottom:1px solid rgba(0,0,0,.25); }
+      a { text-decoration:none; border-bottom:1px solid currentColor; }
       ::selection { background:rgba(120,110,255,.28); }
     `;
     if (!style.parentNode) doc.head.appendChild(style);
@@ -145,7 +181,7 @@ export default function Reader({
     target = Math.min(Math.max(0, target), total - 1);
     setPage(target);
     doc.documentElement.scrollLeft = target * w;
-  }, [page]);
+  }, [page, prefs]);
 
   // ---- wire the frame per chapter ----
   useEffect(() => {
@@ -215,6 +251,15 @@ export default function Reader({
     // this would reload the chapter on every page turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter, session]);
+
+  // Changing type or spacing reflows the text, so hold position by ratio.
+  useEffect(() => {
+    savePrefs(prefs);
+    pending.current = pages > 1 ? page / pages : 0;
+    paginate();
+    // Only prefs should trigger this; page/pages are read, not depended on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -327,8 +372,12 @@ export default function Reader({
 
   return (
     <div
-      className="flex h-full flex-col bg-[#2a2622] text-slate-200"
-      onClick={() => setMenu(null)}
+      className="relative flex h-full flex-col text-slate-200"
+      style={{ background: THEMES[prefs.theme].chrome }}
+      onClick={() => {
+        setMenu(null);
+        setPrefsOpen(false);
+      }}
     >
       {/* Chrome */}
       <header className="flex shrink-0 items-center gap-2 px-3 py-2">
@@ -355,6 +404,19 @@ export default function Reader({
           <div className="truncate text-[13px] font-medium text-white/80">{book.title}</div>
           <div className="truncate text-[11px] text-white/35">{chapterLabel}</div>
         </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setPrefsOpen((v) => !v);
+          }}
+          title="Type and appearance"
+          className={cx(
+            "rounded-md p-2 transition-colors",
+            prefsOpen ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
+          )}
+        >
+          <Icon name="type" className="h-4 w-4" />
+        </button>
         {onOpenExternally && (
           <button
             onClick={onOpenExternally}
@@ -401,7 +463,8 @@ export default function Reader({
         <div className="relative min-w-0 flex-1 px-6 pb-3">
           <div
             ref={hostRef}
-            className="relative h-full w-full overflow-hidden rounded-md bg-[#faf7f1] shadow-[0_10px_40px_rgba(0,0,0,.45)]"
+            className="relative h-full w-full overflow-hidden rounded-md shadow-[0_10px_40px_rgba(0,0,0,.45)]"
+            style={{ background: THEMES[prefs.theme].bg }}
           >
             {error ? (
               <div className="grid h-full place-items-center p-8">
@@ -457,6 +520,10 @@ export default function Reader({
         </span>
       </footer>
 
+      {prefsOpen && (
+        <PrefsPanel prefs={prefs} onChange={setPrefs} onClose={() => setPrefsOpen(false)} />
+      )}
+
       {menu && (
         <ContextMenu
           menu={menu}
@@ -468,6 +535,148 @@ export default function Reader({
           onDismiss={() => setMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Type and appearance, in the spirit of Books' "Aa" popover. */
+function PrefsPanel({
+  prefs,
+  onChange,
+  onClose,
+}: {
+  prefs: ReaderPrefs;
+  onChange: (p: ReaderPrefs) => void;
+  onClose: () => void;
+}) {
+  const set = <K extends keyof ReaderPrefs>(k: K, v: ReaderPrefs[K]) =>
+    onChange({ ...prefs, [k]: v });
+
+  const themes: { id: Theme; label: string }[] = [
+    { id: "paper", label: "Paper" },
+    { id: "sepia", label: "Sepia" },
+    { id: "night", label: "Night" },
+  ];
+
+  return (
+    <div
+      className="absolute right-3 top-12 z-40 w-72 rounded-xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Type &amp; appearance
+        </span>
+        <button
+          onClick={onClose}
+          className="rounded p-1 text-slate-500 hover:bg-white/10 hover:text-white"
+        >
+          <Icon name="x" className="h-3 w-3" />
+        </button>
+      </div>
+
+      {/* Theme */}
+      <div className="mb-3 grid grid-cols-3 gap-1.5">
+        {themes.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => set("theme", t.id)}
+            className={cx(
+              "rounded-lg border py-2 text-[11px] font-medium transition-colors",
+              prefs.theme === t.id ? "border-teal-500/70" : "border-white/10 hover:border-white/25"
+            )}
+            style={{ background: THEMES[t.id].bg, color: THEMES[t.id].fg }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Typeface — "Publisher's font" is the Original equivalent. */}
+      <label className="mb-1 block text-[11px] text-slate-500">Typeface</label>
+      <select
+        value={prefs.font}
+        onChange={(e) => set("font", e.target.value as FontChoice)}
+        className="mb-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-sm outline-none focus:border-teal-500/50"
+      >
+        {(Object.keys(FONT_LABELS) as FontChoice[]).map((f) => (
+          <option key={f} value={f}>
+            {FONT_LABELS[f]}
+          </option>
+        ))}
+      </select>
+      <p className="mb-3 text-[10px] leading-snug text-slate-500">
+        {prefs.font === "publisher"
+          ? "Using the book's own typeface and embedded fonts."
+          : "Overriding the publisher's typeface."}
+      </p>
+
+      <Stepper
+        label="Text size"
+        value={`${prefs.size}px`}
+        onDown={() => set("size", Math.max(13, prefs.size - 1))}
+        onUp={() => set("size", Math.min(32, prefs.size + 1))}
+      />
+      <Stepper
+        label="Line spacing"
+        value={prefs.lineHeight.toFixed(2)}
+        onDown={() => set("lineHeight", Math.max(1.2, +(prefs.lineHeight - 0.1).toFixed(2)))}
+        onUp={() => set("lineHeight", Math.min(2.4, +(prefs.lineHeight + 0.1).toFixed(2)))}
+      />
+      <Stepper
+        label="Margins"
+        value={`${prefs.margin}px`}
+        onDown={() => set("margin", Math.max(16, prefs.margin - 8))}
+        onUp={() => set("margin", Math.min(140, prefs.margin + 8))}
+      />
+
+      <label className="mt-2 flex cursor-pointer items-center gap-2 text-[12px] text-slate-300">
+        <input
+          type="checkbox"
+          checked={prefs.justify}
+          onChange={(e) => set("justify", e.target.checked)}
+          className="accent-teal-500"
+        />
+        Justify text
+      </label>
+
+      <button
+        onClick={() => onChange(DEFAULT_PREFS)}
+        className="mt-3 w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-slate-400 hover:bg-white/5 hover:text-white"
+      >
+        Reset to defaults
+      </button>
+    </div>
+  );
+}
+
+function Stepper({
+  label,
+  value,
+  onDown,
+  onUp,
+}: {
+  label: string;
+  value: string;
+  onDown: () => void;
+  onUp: () => void;
+}) {
+  return (
+    <div className="mb-1.5 flex items-center gap-2">
+      <span className="flex-1 text-[12px] text-slate-400">{label}</span>
+      <span className="w-12 text-right text-[11px] tabular-nums text-slate-500">{value}</span>
+      <button
+        onClick={onDown}
+        className="rounded-md border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/10"
+      >
+        −
+      </button>
+      <button
+        onClick={onUp}
+        className="rounded-md border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/10"
+      >
+        +
+      </button>
     </div>
   );
 }
@@ -553,8 +762,7 @@ function buildDocument(chapter: Chapter, resourceBase: string): string {
   // come first in the cascade.
   const defaults = doc.createElement("style");
   defaults.textContent = `
-    body { color:#1c1a17; background:#faf7f1; line-height:1.62; font-size:19px;
-           font-family:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+    body { font-family:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
            -webkit-font-smoothing:antialiased; }
     p { margin:0 0 0.2em; text-indent:1.3em; }
     p:first-of-type, h1 + p, h2 + p, h3 + p, blockquote p { text-indent:0; }
