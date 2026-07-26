@@ -103,6 +103,20 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   bookmark: <path d="M6 3h12v18l-6-4-6 4Z" />,
+  list: (
+    <>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
+    </>
+  ),
+  grid: (
+    <>
+      <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
+    </>
+  ),
   read: (
     <>
       <path d="M12 7.5C10.5 6 8.5 5.2 6 5.2c-1 0-2 .1-3 .4v12.6c1-.3 2-.4 3-.4 2.5 0 4.5.8 6 2.3" />

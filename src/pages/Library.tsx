@@ -14,6 +14,13 @@ import { Badge, Button, Icon, Spinner, StarRating, cx, statusMeta } from "../ui"
 
 type SortKey = "title" | "author" | "category" | "status" | "progress" | "rating" | "pages" | "words";
 type StatusFilter = "all" | Status;
+type ViewMode = "list" | "grid";
+
+const VIEW_KEY = "bv.libraryView";
+
+function loadViewMode(): ViewMode {
+  return localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
+}
 
 const STATUS_TABS: { id: StatusFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -46,6 +53,12 @@ export default function Library({
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "title", dir: 1 });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [view, setView] = useState<ViewMode>(loadViewMode);
+
+  // Remember the last chosen layout across launches.
+  useEffect(() => {
+    localStorage.setItem(VIEW_KEY, view);
+  }, [view]);
 
   useEffect(() => {
     let alive = true;
@@ -190,6 +203,28 @@ export default function Library({
             </option>
           ))}
         </select>
+
+        {/* Layout toggle */}
+        <div className="flex shrink-0 gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
+          {([
+            { id: "list" as ViewMode, icon: "list", label: "List view" },
+            { id: "grid" as ViewMode, icon: "grid", label: "Grid view" },
+          ]).map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id)}
+              title={v.label}
+              aria-label={v.label}
+              aria-pressed={view === v.id}
+              className={cx(
+                "rounded-md px-2.5 py-2 transition-colors",
+                view === v.id ? "bg-teal-600 text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+              )}
+            >
+              <Icon name={v.icon} className="h-4 w-4" />
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -200,6 +235,18 @@ export default function Library({
         <p className="py-10 text-center text-sm text-slate-500">
           {books.length === 0 ? "No books yet — set your folder and scan." : "No books match these filters."}
         </p>
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {filtered.map((b) => (
+            <BookCard
+              key={b.id}
+              book={b}
+              active={b.id === selectedId}
+              onClick={() => setSelectedId(b.id)}
+              onOpen={() => openInReader(b)}
+            />
+          ))}
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full min-w-[820px] text-sm">
@@ -359,6 +406,61 @@ function BookRow({
         )}
       </td>
     </tr>
+  );
+}
+
+/** Grid tile: cover plus title, nothing else. Same interactions as a row —
+ *  click selects, double-click (or the hover button) opens the reader. */
+function BookCard({
+  book,
+  active,
+  onClick,
+  onOpen,
+}: {
+  book: Book;
+  active: boolean;
+  onClick: () => void;
+  onOpen: () => void;
+}) {
+  const img = assetUrl(book.cover_path);
+  return (
+    <div className="group cursor-pointer" onClick={onClick} onDoubleClick={onOpen}>
+      <div
+        className={cx(
+          "relative aspect-[2/3] overflow-hidden rounded-lg border bg-slate-800 transition-colors",
+          active ? "border-teal-500/60 ring-2 ring-teal-500/25" : "border-white/10 group-hover:border-white/25"
+        )}
+      >
+        {img ? (
+          <img src={img} alt="" className="h-full w-full object-cover" loading="lazy" />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-slate-600">
+            <Icon name="book" className="h-8 w-8" />
+          </div>
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+          title={`Read in your default ${book.format.toUpperCase()} reader`}
+          className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100"
+        >
+          <span className="rounded-full bg-white/15 p-2.5 backdrop-blur">
+            <Icon name="read" className="h-5 w-5 text-white" />
+          </span>
+        </button>
+      </div>
+      <div
+        className={cx(
+          "mt-2 line-clamp-2 text-[13px] font-medium leading-snug",
+          active ? "text-white" : "text-slate-300"
+        )}
+        title={book.title}
+      >
+        {book.title}
+      </div>
+    </div>
   );
 }
 
