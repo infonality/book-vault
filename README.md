@@ -147,6 +147,10 @@ release:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+To get installers without cutting a release — for testing on a machine you
+don't build on — run the workflow manually from the Actions tab. It builds all
+three platforms and attaches them to the run as artifacts instead.
+
 ## Project layout
 
 ```
