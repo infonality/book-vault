@@ -41,6 +41,13 @@ paper, sepia and night, with adjustable size, spacing and margins — and a
 **Publisher's font** option that leaves the book's own typeface and embedded
 fonts exactly as designed.
 
+**Search, highlight and bookmark**
+Full-text search across the whole book jumps you to the passage and flags it.
+Select any text to highlight it in one of four colours, or drop a bookmark;
+both are listed in a side panel that takes you back. Highlights are anchored to
+the text itself, so changing the type size or resizing the window never moves
+them.
+
 **Or hands them to whatever you already use**
 PDFs go straight to your system's default application, and EPUBs can too from
 the details panel. Book Vault marks the book as started and asks how far you got
