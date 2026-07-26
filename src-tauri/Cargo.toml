@@ -1,6 +1,6 @@
 [package]
 name = "bookvault"
-version = "0.1.3"
+version = "0.2.0"
 description = "Book Vault - personal ebook library & reading tracker"
 authors = ["Kas"]
 edition = "2021"

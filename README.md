@@ -34,15 +34,22 @@ Anything still missing can be looked up on [Open Library](https://openlibrary.or
 cover, page count, subjects, description — from a list of candidate matches. No
 API key needed. If nothing matches, type the details in yourself.
 
-**Opens the book you actually want to read**
-Hit **Read now** (or double-click a row) and the file goes straight to whatever
-app your system uses for that format — Calibre, SumatraPDF, Preview, whatever
-you've got. Book Vault marks it as started, and asks how far you got when you
-come back.
+**Reads your EPUBs**
+A built-in reader opens each book in its own window: paginated two-page spread,
+table of contents, and your position remembered to the paragraph. Themes for
+paper, sepia and night, with adjustable size, spacing and margins — and a
+**Publisher's font** option that leaves the book's own typeface and embedded
+fonts exactly as designed.
+
+**Or hands them to whatever you already use**
+PDFs go straight to your system's default application, and EPUBs can too from
+the details panel. Book Vault marks the book as started and asks how far you got
+when you come back, since an external reader can't report position back.
 
 **Tracks your reading**
-A sortable table of every book with reading status, page progress, a 1–5 star
-rating, and free-text categories with a preset picker.
+A sortable table — or a cover grid — of every book with reading status, progress,
+a 1–5 star rating, and free-text categories with a preset picker. Reading an EPUB
+in the built-in reader updates progress on its own; nothing to type in.
 
 **Shows you the numbers**
 A dashboard totalling books, pages, and words read, what you're part-way through,
@@ -80,6 +87,11 @@ can get and lets you correct the rest — every field stays editable.
 Estimated word counts are shown with a `~` and use a words-per-page figure you
 can change in Settings. Pages and words only count toward your totals once a book
 is marked finished.
+
+Reflowable text has no fixed pages, so the reader stores your position as a spine
+index plus a ratio through that chapter rather than a page number — it survives a
+font change, a resize, or a switch to a two-column spread. The percentage you see
+is derived from character counts taken when the book opens.
 
 > **On Goodreads:** Goodreads retired its public API in 2020 and issues no new
 > keys, so there's no supported way to query it. Open Library is the stand-in —
@@ -134,12 +146,16 @@ git tag v0.1.0 && git push origin v0.1.0
 src/                    React + TypeScript UI
   api.ts                typed wrappers over the Tauri command surface
   ui.tsx                shared primitives (icons, buttons, star rating)
-  pages/                Dashboard, Library (table + detail drawer), Settings
+  reader-prefs.ts       themes, typefaces and spacing for the reader
+  pages/                Dashboard, Library (table/grid + drawer), Settings
+    Reader.tsx          paginated reader; Books-style presentation
+    ReaderWindow.tsx    host for the standalone reader window
 src-tauri/src/
   commands.rs           Tauri IPC boundary
   db.rs                 SQLite schema and queries
   scanner.rs            folder walk, registration, cover refresh
   formats/              epub / pdf / mobi metadata extraction
+  reader.rs             spine, contents, sanitising, asset serving
   pdfcover.rs           PDF first-page rendering via PDFium
   metadata.rs           Open Library search and cover download
 ```
