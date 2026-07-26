@@ -5,7 +5,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::models::{Book, BookEdit, CategoryStat, DashboardStats, Settings};
+use crate::models::{Annotation, Book, BookEdit, CategoryStat, DashboardStats, Settings};
 
 pub fn open(path: &std::path::Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
@@ -62,6 +62,26 @@ fn migrate(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_books_status   ON books(status);
         CREATE INDEX IF NOT EXISTS idx_books_category ON books(category);
+
+        -- Highlights and bookmarks. Anchored by character offsets into the
+        -- chapter's rendered text rather than anything geometric, so they
+        -- survive a font change, a resize, or a switch to two columns.
+        CREATE TABLE IF NOT EXISTS annotations (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            spine      INTEGER NOT NULL,
+            start_off  INTEGER NOT NULL,
+            end_off    INTEGER NOT NULL,
+            -- highlight | bookmark
+            kind       TEXT NOT NULL DEFAULT 'highlight',
+            color      TEXT NOT NULL DEFAULT 'yellow',
+            text       TEXT NOT NULL DEFAULT '',
+            note       TEXT,
+            created_at INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_annotations_book
+            ON annotations(book_id, spine, start_off);
         "#,
     )?;
     // Columns added after 0.1.1 — existing libraries need them backfilled.
@@ -437,6 +457,78 @@ pub fn apply_metadata(
             pages, words, words_estimated as i64, cover_path, now
         ],
     )?;
+    Ok(())
+}
+
+// ---------- annotations ----------
+
+fn row_to_annotation(r: &Row) -> rusqlite::Result<Annotation> {
+    Ok(Annotation {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        spine: r.get(2)?,
+        start_off: r.get(3)?,
+        end_off: r.get(4)?,
+        kind: r.get(5)?,
+        color: r.get(6)?,
+        text: r.get(7)?,
+        note: r.get(8)?,
+        created_at: r.get(9)?,
+    })
+}
+
+const ANNOTATION_COLS: &str =
+    "id, book_id, spine, start_off, end_off, kind, color, text, note, created_at";
+
+pub fn list_annotations(conn: &Connection, book_id: i64) -> Result<Vec<Annotation>> {
+    let sql = format!(
+        "SELECT {ANNOTATION_COLS} FROM annotations WHERE book_id=?1
+         ORDER BY spine, start_off"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([book_id], row_to_annotation)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn add_annotation(
+    conn: &Connection,
+    book_id: i64,
+    spine: i64,
+    start_off: i64,
+    end_off: i64,
+    kind: &str,
+    color: &str,
+    text: &str,
+    now: i64,
+) -> Result<Annotation> {
+    conn.execute(
+        "INSERT INTO annotations(book_id, spine, start_off, end_off, kind, color, text, created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![book_id, spine, start_off, end_off, kind, color, text, now],
+    )?;
+    let id = conn.last_insert_rowid();
+    let sql = format!("SELECT {ANNOTATION_COLS} FROM annotations WHERE id=?1");
+    Ok(conn.query_row(&sql, [id], row_to_annotation)?)
+}
+
+pub fn update_annotation(
+    conn: &Connection,
+    id: i64,
+    note: Option<&str>,
+    color: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE annotations SET note=COALESCE(?2, note), color=COALESCE(?3, color) WHERE id=?1",
+        params![id, note, color],
+    )?;
+    Ok(())
+}
+
+pub fn delete_annotation(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM annotations WHERE id=?1", [id])?;
     Ok(())
 }
 

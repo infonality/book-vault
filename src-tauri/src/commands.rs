@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::db;
 use crate::error::CmdResult;
 use crate::models::{
-    Book, BookEdit, DashboardStats, MetaCandidate, ScanResult, Settings,
+    Annotation, Book, BookEdit, DashboardStats, MetaCandidate, ScanResult, Settings,
 };
 use crate::scanner::now_ts;
 use crate::{covers, metadata, scanner};
@@ -171,6 +171,65 @@ pub fn reader_save_position(
     let conn = state.conn.lock().map_err(s)?;
     db::save_locator(&conn, id, &locator, percent, now_ts()).map_err(s)?;
     db::require_book(&conn, id).map_err(s)
+}
+
+#[tauri::command]
+pub fn reader_search(
+    state: State<'_, AppState>,
+    id: i64,
+    query: String,
+) -> CmdResult<Vec<crate::reader::SearchHit>> {
+    let path = {
+        let conn = state.conn.lock().map_err(s)?;
+        db::require_book(&conn, id).map_err(s)?.path
+    };
+    // Capped so a single-letter query on a long book can't flood the UI.
+    crate::reader::search(std::path::Path::new(&path), &query, 300)
+        .map_err(|e| format!("{e:#}"))
+}
+
+// ---------------- highlights & bookmarks ----------------
+
+#[tauri::command]
+pub fn list_annotations(state: State<'_, AppState>, book_id: i64) -> CmdResult<Vec<Annotation>> {
+    let conn = state.conn.lock().map_err(s)?;
+    db::list_annotations(&conn, book_id).map_err(s)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn add_annotation(
+    state: State<'_, AppState>,
+    book_id: i64,
+    spine: i64,
+    start_off: i64,
+    end_off: i64,
+    kind: String,
+    color: String,
+    text: String,
+) -> CmdResult<Annotation> {
+    let conn = state.conn.lock().map_err(s)?;
+    db::add_annotation(
+        &conn, book_id, spine, start_off, end_off, &kind, &color, &text, now_ts(),
+    )
+    .map_err(s)
+}
+
+#[tauri::command]
+pub fn update_annotation(
+    state: State<'_, AppState>,
+    id: i64,
+    note: Option<String>,
+    color: Option<String>,
+) -> CmdResult<()> {
+    let conn = state.conn.lock().map_err(s)?;
+    db::update_annotation(&conn, id, note.as_deref(), color.as_deref()).map_err(s)
+}
+
+#[tauri::command]
+pub fn delete_annotation(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let conn = state.conn.lock().map_err(s)?;
+    db::delete_annotation(&conn, id).map_err(s)
 }
 
 /// Hand a book to whatever application the OS has registered for its file type,

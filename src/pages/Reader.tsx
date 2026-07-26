@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Book, Chapter, Locator, ReaderSession } from "../api";
+import {
+  Annotation,
+  api,
+  Book,
+  Chapter,
+  Locator,
+  ReaderSession,
+  SearchHit,
+} from "../api";
+import {
+  clearMarks,
+  HIGHLIGHT_COLORS,
+  markRange,
+  offsetsForOccurrence,
+  offsetsForSelection,
+  pageForRange,
+  rangeForOffsets,
+} from "../reader-dom";
 import { cx, Icon, Spinner } from "../ui";
 import {
   DEFAULT_PREFS,
@@ -31,7 +48,15 @@ const IDEAL_COLUMN = 720;
 /** A wheel notch shouldn't fire more than one page turn. */
 const WHEEL_COOLDOWN = 320;
 
-type Menu = { x: number; y: number; selection: string } | null;
+type Menu = {
+  x: number;
+  y: number;
+  selection: string;
+  /** Offsets of the selection, when there is one. */
+  range: { start: number; end: number } | null;
+} | null;
+
+type Panel = "toc" | "search" | "notes" | null;
 
 export default function Reader({
   book,
@@ -49,8 +74,18 @@ export default function Reader({
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pages, setPages] = useState(1);
-  const [tocOpen, setTocOpen] = useState(false);
+  const [panel, setPanel] = useState<Panel>(null);
   const [menu, setMenu] = useState<Menu>(null);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  // The search result to keep flagged. It persists across relayouts — marks are
+  // cleared and redrawn every paginate, so consuming it on the first pass would
+  // make the flag vanish as soon as fonts settled and triggered a second one.
+  const flash = useRef<{ text: string; occurrence: number } | null>(null);
+  // Set once per jump, to move the page to wherever the match landed.
+  const jumpToFlash = useRef(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
 
@@ -60,6 +95,10 @@ export default function Reader({
   // or "end" when paging backwards into it.
   const pending = useRef<number | "end" | null>(null);
   const lastWheel = useRef(0);
+  // paginate() reads these; depending on them directly would relayout on every
+  // annotation change even when nothing visual moved.
+  const annotationsRef = useRef<Annotation[]>([]);
+  const chapterRef = useRef<number | null>(null);
 
   // ---- load ----
   useEffect(() => {
@@ -87,6 +126,12 @@ export default function Reader({
     };
   }, [book.id]);
 
+  const reloadAnnotations = useCallback(() => {
+    api.listAnnotations(book.id).then(setAnnotations).catch(() => {});
+  }, [book.id]);
+
+  useEffect(reloadAnnotations, [reloadAnnotations]);
+
   const charsBefore = useMemo(() => {
     const out: number[] = [];
     let sum = 0;
@@ -96,6 +141,13 @@ export default function Reader({
     }
     return out;
   }, [session]);
+
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+  useEffect(() => {
+    chapterRef.current = chapter?.index ?? null;
+  }, [chapter]);
 
   const percentAt = useCallback(
     (spine: number, ratio: number) => {
@@ -173,7 +225,44 @@ export default function Reader({
     const total = Math.max(1, Math.round(doc.body.scrollWidth / w));
     setPages(total);
 
+    // Highlights are redrawn from scratch each layout: marks split text nodes,
+    // so leaving old ones in place would corrupt subsequent offsets.
+    clearMarks(doc, "data-bv-hl");
+    clearMarks(doc, "data-bv-seek");
+    if (chapterRef.current !== null) {
+      for (const a of annotationsRef.current) {
+        if (a.spine !== chapterRef.current || a.kind !== "highlight") continue;
+        const r = rangeForOffsets(doc, a.start_off, a.end_off);
+        if (r) markRange(doc, r, "data-bv-hl", String(a.id), HIGHLIGHT_COLORS[a.color] ?? HIGHLIGHT_COLORS.yellow);
+      }
+    }
+
     let target = page;
+
+    // Redraw the search flag every layout, and on a fresh jump move to it.
+    if (flash.current) {
+      const found = offsetsForOccurrence(doc, flash.current.text, flash.current.occurrence);
+      const r = found && rangeForOffsets(doc, found.start, found.end);
+      if (r) {
+        markRange(doc, r, "data-bv-seek", "1", "rgba(255,193,7,.5)");
+        if (jumpToFlash.current) {
+          jumpToFlash.current = false;
+          pending.current = null;
+          const total0 = Math.max(1, Math.round(doc.body.scrollWidth / w));
+          setPages(total0);
+          const p = Math.min(pageForRange(doc, r, w), total0 - 1);
+          setPage(p);
+          doc.documentElement.scrollLeft = p * w;
+          return;
+        }
+      } else if (jumpToFlash.current) {
+        // The phrase didn't survive markup stripping identically; fall back to
+        // the chapter start rather than jumping somewhere arbitrary.
+        jumpToFlash.current = false;
+        flash.current = null;
+      }
+    }
+
     if (pending.current !== null) {
       target = pending.current === "end" ? total - 1 : Math.round(pending.current * total);
       pending.current = null;
@@ -203,10 +292,12 @@ export default function Reader({
       doc.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         const rect = frame.getBoundingClientRect();
+        const sel = offsetsForSelection(doc);
         setMenu({
           x: rect.left + (e as MouseEvent).clientX,
           y: rect.top + (e as MouseEvent).clientY,
-          selection: doc.getSelection()?.toString().trim() ?? "",
+          selection: sel?.text.trim() ?? "",
+          range: sel ? { start: sel.start, end: sel.end } : null,
         });
       });
 
@@ -252,6 +343,12 @@ export default function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter, session]);
 
+  // Redraw marks when an annotation is added or removed.
+  useEffect(() => {
+    if (chapter) paginate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations]);
+
   // Changing type or spacing reflows the text, so hold position by ratio.
   useEffect(() => {
     savePrefs(prefs);
@@ -277,7 +374,7 @@ export default function Reader({
     async (index: number, land: number | "end" = 0) => {
       if (!session || index < 0 || index >= session.spine.length) return;
       pending.current = land;
-      setTocOpen(false);
+      setPanel(null);
       try {
         setChapter(await api.readerChapter(book.id, index));
       } catch (e) {
@@ -293,6 +390,7 @@ export default function Reader({
       const host = hostRef.current;
       if (!frame?.contentDocument || !host || !chapter) return;
       setMenu(null);
+      flash.current = null;
       const next = page + dir;
       if (next < 0) return void goToChapter(chapter.index - 1, "end");
       if (next >= pages) return void goToChapter(chapter.index + 1, 0);
@@ -360,13 +458,82 @@ export default function Reader({
     return () => clearTimeout(t);
   }, [book.id, chapter, page, pages, session, percentAt, onProgress]);
 
-  const chapterLabel = useMemo(() => {
-    if (!session || !chapter) return "";
-    const hit = [...session.toc]
-      .filter((t) => t.spine_index !== null && t.spine_index <= chapter.index)
-      .pop();
-    return hit?.label ?? `Section ${chapter.index + 1}`;
-  }, [session, chapter]);
+  const runSearch = useCallback(async () => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    setSearching(true);
+    try {
+      setHits(await api.readerSearch(book.id, q));
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setSearching(false);
+    }
+  }, [book.id, query]);
+
+  /** Jump to a result, then locate the exact phrase once the page renders. */
+  const gotoHit = useCallback(
+    (hit: SearchHit) => {
+      flash.current = { text: query.trim(), occurrence: hit.occurrence };
+      jumpToFlash.current = true;
+      if (chapter?.index === hit.spine) {
+        paginate();
+      } else {
+        goToChapter(hit.spine);
+      }
+    },
+    [query, chapter, paginate, goToChapter]
+  );
+
+  const addAnnotation = useCallback(
+    async (kind: "highlight" | "bookmark", color = "yellow") => {
+      if (!chapter) return;
+      const doc = frameRef.current?.contentDocument;
+      let range = menu?.range ?? null;
+      let text = menu?.selection ?? "";
+      // A bookmark with nothing selected marks the top of the current page.
+      if (!range && kind === "bookmark" && doc) {
+        const chars = chapter.chars || 1;
+        const at = Math.round((pages > 1 ? page / pages : 0) * chars);
+        range = { start: at, end: at + 1 };
+        text = `Page ${page + 1}`;
+      }
+      if (!range) return;
+      try {
+        await api.addAnnotation({
+          bookId: book.id,
+          spine: chapter.index,
+          startOff: range.start,
+          endOff: range.end,
+          kind,
+          color,
+          text: text.slice(0, 500),
+        });
+        reloadAnnotations();
+      } catch (e) {
+        alert(String(e));
+      }
+      setMenu(null);
+    },
+    [book.id, chapter, menu, page, pages, reloadAnnotations]
+  );
+
+  const removeAnnotation = useCallback(
+    async (id: number) => {
+      try {
+        await api.deleteAnnotation(id);
+        reloadAnnotations();
+      } catch (e) {
+        alert(String(e));
+      }
+    },
+    [reloadAnnotations]
+  );
+
+  const chapterLabel = useMemo(
+    () => (chapter ? labelForSpine(session, chapter.index) : ""),
+    [session, chapter]
+  );
 
   const cols = (hostRef.current?.clientWidth ?? 0) >= IDEAL_COLUMN * 2 ? 2 : 1;
 
@@ -391,11 +558,11 @@ export default function Reader({
           </button>
         )}
         <button
-          onClick={() => setTocOpen((v) => !v)}
+          onClick={() => setPanel((p) => (p === "toc" ? null : "toc"))}
           title="Contents"
           className={cx(
             "rounded-md p-2 transition-colors",
-            tocOpen ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
+            panel === "toc" ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
           )}
         >
           <Icon name="list" className="h-4 w-4" />
@@ -404,6 +571,29 @@ export default function Reader({
           <div className="truncate text-[13px] font-medium text-white/80">{book.title}</div>
           <div className="truncate text-[11px] text-white/35">{chapterLabel}</div>
         </div>
+        <button
+          onClick={() => setPanel((p) => (p === "search" ? null : "search"))}
+          title="Search in book"
+          className={cx(
+            "rounded-md p-2 transition-colors",
+            panel === "search" ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
+          )}
+        >
+          <Icon name="search" className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => setPanel((p) => (p === "notes" ? null : "notes"))}
+          title="Highlights & bookmarks"
+          className={cx(
+            "relative rounded-md p-2 transition-colors",
+            panel === "notes" ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
+          )}
+        >
+          <Icon name="bookmark" className="h-4 w-4" />
+          {annotations.length > 0 && (
+            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-teal-400" />
+          )}
+        </button>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -432,7 +622,7 @@ export default function Reader({
       </header>
 
       <div className="relative flex min-h-0 flex-1">
-        {tocOpen && (
+        {panel === "toc" && (
           <nav className="w-72 shrink-0 overflow-y-auto border-r border-white/10 py-2">
             {session?.toc.length ? (
               session.toc.map((t, i) => (
@@ -457,6 +647,113 @@ export default function Reader({
               <p className="px-4 py-2 text-xs text-white/35">No contents in this book.</p>
             )}
           </nav>
+        )}
+
+        {panel === "search" && (
+          <aside className="flex w-80 shrink-0 flex-col border-r border-white/10">
+            <div className="p-2">
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && runSearch()}
+                placeholder="Search this book…"
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-teal-500/50"
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {searching ? (
+                <div className="flex items-center gap-2 px-3 py-3 text-xs text-white/40">
+                  <Spinner className="h-3.5 w-3.5" /> Searching…
+                </div>
+              ) : hits === null ? (
+                <p className="px-3 py-2 text-[11px] leading-relaxed text-white/30">
+                  Searches the whole book. Press Enter to run.
+                </p>
+              ) : hits.length === 0 ? (
+                <p className="px-3 py-2 text-[11px] text-white/30">No matches.</p>
+              ) : (
+                <>
+                  <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/25">
+                    {hits.length} match{hits.length === 1 ? "" : "es"}
+                  </div>
+                  {hits.map((h, i) => (
+                    <button
+                      key={i}
+                      onClick={() => gotoHit(h)}
+                      className="block w-full border-b border-white/5 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                    >
+                      <div className="text-[10px] uppercase tracking-wide text-white/25">
+                        {labelForSpine(session, h.spine)}
+                      </div>
+                      <div className="mt-0.5 line-clamp-3 text-[12px] leading-snug text-white/60">
+                        {h.snippet}
+                      </div>
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </aside>
+        )}
+
+        {panel === "notes" && (
+          <aside className="w-80 shrink-0 overflow-y-auto border-r border-white/10">
+            {annotations.length === 0 ? (
+              <p className="px-3 py-3 text-[11px] leading-relaxed text-white/30">
+                Select text and right-click to highlight it. Bookmarks work the same way,
+                or mark the current page from the menu with nothing selected.
+              </p>
+            ) : (
+              annotations.map((a) => (
+                <div key={a.id} className="group border-b border-white/5 px-3 py-2">
+                  <div className="flex items-start gap-2">
+                    <span
+                      className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{
+                        background:
+                          a.kind === "bookmark"
+                            ? "rgba(255,255,255,.35)"
+                            : HIGHLIGHT_COLORS[a.color] ?? HIGHLIGHT_COLORS.yellow,
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        flash.current = null;
+                        goToChapter(a.spine, 0);
+                        setTimeout(() => {
+                          const doc = frameRef.current?.contentDocument;
+                          const host = hostRef.current;
+                          if (!doc || !host) return;
+                          const r = rangeForOffsets(doc, a.start_off, a.end_off);
+                          if (r) {
+                            const p = pageForRange(doc, r, host.clientWidth);
+                            setPage(p);
+                            doc.documentElement.scrollLeft = p * host.clientWidth;
+                          }
+                        }, 350);
+                      }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="text-[10px] uppercase tracking-wide text-white/25">
+                        {labelForSpine(session, a.spine)}
+                      </div>
+                      <div className="mt-0.5 line-clamp-3 text-[12px] leading-snug text-white/60">
+                        {a.text || "(no text)"}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => removeAnnotation(a.id)}
+                      title="Delete"
+                      className="rounded p-1 text-white/20 opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                    >
+                      <Icon name="trash" className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </aside>
         )}
 
         {/* The paper */}
@@ -529,14 +826,25 @@ export default function Reader({
           menu={menu}
           hasToc={!!session?.toc.length}
           onCopy={() => navigator.clipboard.writeText(menu.selection).catch(() => {})}
-          onContents={() => setTocOpen(true)}
+          onContents={() => setPanel("toc")}
           onTurn={turn}
           onExternal={onOpenExternally}
+          onHighlight={(c) => addAnnotation("highlight", c)}
+          onBookmark={() => addAnnotation("bookmark")}
           onDismiss={() => setMenu(null)}
         />
       )}
     </div>
   );
+}
+
+/** Nearest table-of-contents label at or before a spine index. */
+function labelForSpine(session: ReaderSession | null, spine: number): string {
+  if (!session) return `Section ${spine + 1}`;
+  const hit = [...session.toc]
+    .filter((t) => t.spine_index !== null && t.spine_index <= spine)
+    .pop();
+  return hit?.label ?? `Section ${spine + 1}`;
 }
 
 /** Type and appearance, in the spirit of Books' "Aa" popover. */
@@ -689,6 +997,8 @@ function ContextMenu({
   onContents,
   onTurn,
   onExternal,
+  onHighlight,
+  onBookmark,
   onDismiss,
 }: {
   menu: NonNullable<Menu>;
@@ -697,10 +1007,18 @@ function ContextMenu({
   onContents: () => void;
   onTurn: (d: 1 | -1) => void;
   onExternal?: () => void;
+  onHighlight: (color: string) => void;
+  onBookmark: () => void;
   onDismiss: () => void;
 }) {
   const items: { label: string; icon: string; run: () => void; show: boolean }[] = [
     { label: "Copy", icon: "check", run: onCopy, show: !!menu.selection },
+    {
+      label: menu.selection ? "Bookmark this passage" : "Bookmark this page",
+      icon: "bookmark",
+      run: onBookmark,
+      show: true,
+    },
     { label: "Next page", icon: "chevron", run: () => onTurn(1), show: true },
     { label: "Previous page", icon: "chevron", run: () => onTurn(-1), show: true },
     { label: "Contents", icon: "list", run: onContents, show: hasToc },
@@ -722,6 +1040,23 @@ function ContextMenu({
         <div className="truncate border-b border-white/10 px-3 py-1.5 text-[11px] italic text-slate-500">
           “{menu.selection.slice(0, 40)}
           {menu.selection.length > 40 ? "…" : ""}”
+        </div>
+      )}
+      {menu.range && (
+        <div className="flex items-center gap-1.5 border-b border-white/10 px-3 py-2">
+          <span className="mr-auto text-[11px] text-slate-500">Highlight</span>
+          {Object.entries(HIGHLIGHT_COLORS).map(([name, css]) => (
+            <button
+              key={name}
+              title={name}
+              onClick={() => {
+                onHighlight(name);
+                onDismiss();
+              }}
+              className="h-5 w-5 rounded-full border border-white/20 transition-transform hover:scale-110"
+              style={{ background: css }}
+            />
+          ))}
         </div>
       )}
       {items.map((i) => (

@@ -131,6 +131,82 @@ pub fn chapter(path: &Path, index: usize) -> Result<Chapter> {
     })
 }
 
+/// One match from a full-text search across the book.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    pub spine: usize,
+    /// Which occurrence this is within its chapter, counting from zero. The
+    /// reader finds the same occurrence in the rendered page rather than
+    /// trusting an offset — the text we search here has had its markup
+    /// stripped, so character positions wouldn't line up with the DOM.
+    pub occurrence: usize,
+    /// Surrounding text for the result list.
+    pub snippet: String,
+}
+
+/// Case-insensitive search over every chapter's text.
+pub fn search(path: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    let q: Vec<char> = query.trim().to_lowercase().chars().collect();
+    if q.len() < 2 {
+        return Ok(Vec::new());
+    }
+    let book = open(path)?;
+    let mut zip = open_zip(path)?;
+    let mut out = Vec::new();
+
+    for item in &book.spine {
+        if out.len() >= limit {
+            break;
+        }
+        let Ok(html) = read_entry_string(&mut zip, &item.path) else {
+            continue;
+        };
+        let chars: Vec<char> = crate::formats::strip_tags(&html).chars().collect();
+        // Fold case per character so positions stay aligned with `chars`;
+        // lowercasing the whole string can change its length.
+        let lower: Vec<char> = chars
+            .iter()
+            .map(|c| c.to_lowercase().next().unwrap_or(*c))
+            .collect();
+
+        let mut occurrence = 0usize;
+        let mut i = 0usize;
+        while i + q.len() <= lower.len() {
+            if lower[i..i + q.len()] == q[..] {
+                out.push(SearchHit {
+                    spine: item.index,
+                    occurrence,
+                    snippet: snippet_at(&chars, i, q.len()),
+                });
+                occurrence += 1;
+                i += q.len();
+                if out.len() >= limit {
+                    break;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A window of text either side of a match, trimmed to whole words.
+fn snippet_at(chars: &[char], start: usize, len: usize) -> String {
+    const PAD: usize = 55;
+    let from = start.saturating_sub(PAD);
+    let to = (start + len + PAD).min(chars.len());
+    let mut s: String = chars[from..to].iter().collect();
+    s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if from > 0 {
+        s.insert_str(0, "… ");
+    }
+    if to < chars.len() {
+        s.push_str(" …");
+    }
+    s
+}
+
 /// Bytes of an asset referenced by a chapter, with a guessed content type.
 /// Only entries present in the archive resolve, so this can't escape the zip.
 pub fn resource(path: &Path, entry: &str) -> Result<(Vec<u8>, String)> {

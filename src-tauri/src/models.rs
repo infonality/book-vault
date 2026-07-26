@@ -123,6 +123,29 @@ pub struct MetaCandidate {
     pub work_key: Option<String>,
 }
 
+/// A highlight or bookmark inside a book.
+///
+/// Anchored by character offsets into the chapter's rendered text, not by
+/// pixels or page numbers, so it stays put when the type size or window
+/// changes and the text reflows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Annotation {
+    pub id: i64,
+    pub book_id: i64,
+    /// Index into the reading order.
+    pub spine: i64,
+    pub start_off: i64,
+    pub end_off: i64,
+    /// highlight | bookmark
+    pub kind: String,
+    pub color: String,
+    /// The text that was marked, kept so the list is readable without
+    /// reopening the chapter.
+    pub text: String,
+    pub note: Option<String>,
+    pub created_at: i64,
+}
+
 /// Progress event emitted during a scan.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProgressEvent {

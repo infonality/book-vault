@@ -172,6 +172,28 @@ export interface Locator {
   ratio: number;
 }
 
+export interface SearchHit {
+  spine: number;
+  /** Which occurrence within its chapter, so the reader can find it in the DOM. */
+  occurrence: number;
+  snippet: string;
+}
+
+export type AnnotationKind = "highlight" | "bookmark";
+
+export interface Annotation {
+  id: number;
+  book_id: number;
+  spine: number;
+  start_off: number;
+  end_off: number;
+  kind: AnnotationKind;
+  color: string;
+  text: string;
+  note: string | null;
+  created_at: number;
+}
+
 export interface ProgressEvent {
   job: string;
   current: number;
@@ -205,6 +227,23 @@ export const api = {
     invoke<Chapter>("reader_chapter", { id, index }),
   readerSavePosition: (id: number, locator: string, percent: number) =>
     invoke<Book>("reader_save_position", { id, locator, percent }),
+
+  readerSearch: (id: number, query: string) =>
+    invoke<SearchHit[]>("reader_search", { id, query }),
+
+  listAnnotations: (bookId: number) => invoke<Annotation[]>("list_annotations", { bookId }),
+  addAnnotation: (a: {
+    bookId: number;
+    spine: number;
+    startOff: number;
+    endOff: number;
+    kind: AnnotationKind;
+    color: string;
+    text: string;
+  }) => invoke<Annotation>("add_annotation", a),
+  updateAnnotation: (id: number, note: string | null, color: string | null) =>
+    invoke<void>("update_annotation", { id, note, color }),
+  deleteAnnotation: (id: number) => invoke<void>("delete_annotation", { id }),
 
   searchMetadata: (query: string) => invoke<MetaCandidate[]>("search_metadata", { query }),
   applyMetadata: (id: number, candidate: MetaCandidate) =>
