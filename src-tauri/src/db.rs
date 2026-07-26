@@ -55,6 +55,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             meta_source    TEXT,
             started_at     INTEGER,
             finished_at    INTEGER,
+            last_opened_at INTEGER,
             added_at       INTEGER NOT NULL DEFAULT 0,
             updated_at     INTEGER NOT NULL DEFAULT 0
         );
@@ -63,6 +64,23 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_books_category ON books(category);
         "#,
     )?;
+    // Columns added after 0.1.1 — existing libraries need them backfilled.
+    add_column(conn, "books", "last_opened_at", "INTEGER")?;
+    Ok(())
+}
+
+/// `ALTER TABLE ... ADD COLUMN`, but a no-op when the column is already there.
+/// SQLite has no `IF NOT EXISTS` for this, so we check the table info first.
+fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .any(|c| c == column);
+    drop(stmt);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
     Ok(())
 }
 
@@ -107,7 +125,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 const BOOK_COLS: &str = "id, path, filename, format, size, title, author, series, publisher,
     published_date, language, isbn, description, category, subjects, cover_path, pages, words,
     words_estimated, status, current_page, rating, meta_status, meta_source, started_at,
-    finished_at, added_at, updated_at";
+    finished_at, last_opened_at, added_at, updated_at";
 
 fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -137,8 +155,9 @@ fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
         meta_source: r.get(23)?,
         started_at: r.get(24)?,
         finished_at: r.get(25)?,
-        added_at: r.get(26)?,
-        updated_at: r.get(27)?,
+        last_opened_at: r.get(26)?,
+        added_at: r.get(27)?,
+        updated_at: r.get(28)?,
     })
 }
 
@@ -317,6 +336,23 @@ pub fn set_progress(conn: &Connection, id: i64, current_page: i64, now: i64) -> 
     conn.execute(
         "UPDATE books SET current_page=?2, status=?3, started_at=?4, updated_at=?5 WHERE id=?1",
         params![id, cp, status, started, now],
+    )?;
+    Ok(())
+}
+
+/// Record that the file was just handed to an external reader. Picking a book
+/// up counts as starting it, so an unread book flips to reading; a finished one
+/// is left alone (re-opening a book you've read shouldn't undo the milestone).
+pub fn mark_opened(conn: &Connection, id: i64, now: i64) -> Result<()> {
+    let book = get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))?;
+    if book.status == "unread" {
+        set_status(conn, id, "reading", now)?;
+    }
+    // Bumping updated_at as well keeps the most recently picked-up books at the
+    // top of the dashboard's "in progress" list.
+    conn.execute(
+        "UPDATE books SET last_opened_at=?2, updated_at=?2 WHERE id=?1",
+        params![id, now],
     )?;
     Ok(())
 }

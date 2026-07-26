@@ -31,6 +31,8 @@ export interface Book {
   meta_source: string | null;
   started_at: number | null;
   finished_at: number | null;
+  /** Unix seconds; last time we handed the file to the system reader. */
+  last_opened_at: number | null;
   added_at: number;
   updated_at: number;
 }
@@ -153,6 +155,8 @@ export const api = {
   setProgress: (id: number, currentPage: number) =>
     invoke<Book>("set_progress", { id, currentPage }),
   setRating: (id: number, rating: number | null) => invoke<Book>("set_rating", { id, rating }),
+  /** Open the file in the OS default reader for its type. */
+  openBook: (id: number) => invoke<Book>("open_book", { id }),
   deleteBook: (id: number) => invoke<void>("delete_book", { id }),
 
   searchMetadata: (query: string) => invoke<MetaCandidate[]>("search_metadata", { query }),
@@ -178,6 +182,16 @@ export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
   const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** "18 min" / "1 h 25 min" — used for how long a reading session ran. */
+export function formatDuration(seconds: number): string {
+  const mins = Math.round(seconds / 60);
+  if (mins < 1) return "under a minute";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
 }
 
 /** Compact number formatting for large word/page totals. */

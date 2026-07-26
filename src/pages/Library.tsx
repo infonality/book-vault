@@ -31,9 +31,12 @@ function progressPct(b: Book): number {
 export default function Library({
   reloadToken,
   onReload,
+  onOpen,
 }: {
   reloadToken: number;
   onReload: () => void;
+  /** Hands the book to the system reader; resolves with the updated row. */
+  onOpen: (book: Book) => Promise<Book>;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -63,6 +66,14 @@ export default function Library({
   const selected = useMemo(() => books.find((b) => b.id === selectedId) ?? null, [books, selectedId]);
 
   const upsert = (b: Book) => setBooks((prev) => prev.map((x) => (x.id === b.id ? b : x)));
+
+  async function openInReader(book: Book) {
+    try {
+      upsert(await onOpen(book));
+    } catch (e) {
+      alert(String(e));
+    }
+  }
 
   const counts = useMemo(() => {
     const c = new Map<string, number>();
@@ -212,6 +223,7 @@ export default function Library({
                   striped={i % 2 === 1}
                   active={b.id === selectedId}
                   onClick={() => setSelectedId(b.id)}
+                  onOpen={() => openInReader(b)}
                 />
               ))}
             </tbody>
@@ -226,6 +238,7 @@ export default function Library({
           categories={categories}
           onClose={() => setSelectedId(null)}
           onChange={upsert}
+          onOpen={() => openInReader(selected)}
           onDeleted={(id) => {
             setBooks((prev) => prev.filter((x) => x.id !== id));
             setSelectedId(null);
@@ -266,11 +279,13 @@ function BookRow({
   striped,
   active,
   onClick,
+  onOpen,
 }: {
   book: Book;
   striped: boolean;
   active: boolean;
   onClick: () => void;
+  onOpen: () => void;
 }) {
   const pct = progressPct(book);
   const sm = statusMeta(book.status);
@@ -278,14 +293,22 @@ function BookRow({
   return (
     <tr
       onClick={onClick}
+      onDoubleClick={onOpen}
       className={cx(
-        "cursor-pointer border-b border-white/5 transition-colors hover:bg-white/[0.05]",
+        "group cursor-pointer border-b border-white/5 transition-colors hover:bg-white/[0.05]",
         active ? "bg-teal-500/10" : striped ? "bg-white/[0.015]" : ""
       )}
     >
       <td className="py-2 pl-4 pr-3">
         <div className="flex items-center gap-3">
-          <div className="h-11 w-8 shrink-0 overflow-hidden rounded bg-slate-800">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen();
+            }}
+            title={`Read in your default ${book.format.toUpperCase()} reader`}
+            className="relative h-11 w-8 shrink-0 overflow-hidden rounded bg-slate-800"
+          >
             {img ? (
               <img src={img} alt="" className="h-full w-full object-cover" loading="lazy" />
             ) : (
@@ -293,7 +316,10 @@ function BookRow({
                 <Icon name="book" className="h-4 w-4" />
               </div>
             )}
-          </div>
+            <span className="absolute inset-0 grid place-items-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100">
+              <Icon name="read" className="h-4 w-4 text-white" />
+            </span>
+          </button>
           <div className="min-w-0">
             <div className="truncate font-medium text-slate-100">{book.title}</div>
             <div className="truncate text-[11px] uppercase tracking-wide text-slate-500">{book.format}</div>
@@ -344,15 +370,18 @@ function BookDrawer({
   onClose,
   onChange,
   onDeleted,
+  onOpen,
 }: {
   book: Book;
   categories: string[];
   onClose: () => void;
   onChange: (b: Book) => void;
   onDeleted: (id: number) => void;
+  onOpen: () => Promise<void>;
 }) {
   const [form, setForm] = useState<BookEdit>(toEdit(book));
   const [savingEdit, setSavingEdit] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [candidates, setCandidates] = useState<MetaCandidate[] | null>(null);
   const [query, setQuery] = useState(`${book.title} ${book.author ?? ""}`.trim());
@@ -463,6 +492,15 @@ function BookDrawer({
     }
   }
 
+  async function read() {
+    setOpening(true);
+    try {
+      await onOpen();
+    } finally {
+      setOpening(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -502,6 +540,23 @@ function BookDrawer({
                 <StarRating value={book.rating} onChange={changeRating} size="h-5 w-5" />
               </div>
             </div>
+          </div>
+
+          {/* Open in the OS default reader for this format */}
+          <div>
+            <Button
+              variant="primary"
+              className="w-full justify-center"
+              busy={opening}
+              onClick={read}
+            >
+              {!opening && <Icon name="read" className="h-4 w-4" />}
+              {opening ? "Opening…" : "Read now"}
+            </Button>
+            <p className="mt-1.5 text-center text-[11px] text-slate-500">
+              Opens in your default {book.format.toUpperCase()} reader. We'll ask where you got to
+              when you come back.
+            </p>
           </div>
 
           {/* Status segmented control */}

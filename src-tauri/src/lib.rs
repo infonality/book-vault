@@ -64,6 +64,7 @@ pub fn run() {
             commands::set_status,
             commands::set_progress,
             commands::set_rating,
+            commands::open_book,
             commands::delete_book,
             commands::search_metadata,
             commands::apply_metadata,

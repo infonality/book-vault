@@ -48,6 +48,8 @@ pub struct Book {
 
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    /// Last time the file was handed to the system's default reader.
+    pub last_opened_at: Option<i64>,
     pub added_at: i64,
     pub updated_at: i64,
 }

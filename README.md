@@ -34,6 +34,12 @@ Anything still missing can be looked up on [Open Library](https://openlibrary.or
 cover, page count, subjects, description — from a list of candidate matches. No
 API key needed. If nothing matches, type the details in yourself.
 
+**Opens the book you actually want to read**
+Hit **Read now** (or double-click a row) and the file goes straight to whatever
+app your system uses for that format — Calibre, SumatraPDF, Preview, whatever
+you've got. Book Vault marks it as started, and asks how far you got when you
+come back.
+
 **Tracks your reading**
 A sortable table of every book with reading status, page progress, a 1–5 star
 rating, and free-text categories with a preset picker.

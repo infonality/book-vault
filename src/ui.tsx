@@ -103,6 +103,13 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   bookmark: <path d="M6 3h12v18l-6-4-6 4Z" />,
+  read: (
+    <>
+      <path d="M12 7.5C10.5 6 8.5 5.2 6 5.2c-1 0-2 .1-3 .4v12.6c1-.3 2-.4 3-.4 2.5 0 4.5.8 6 2.3" />
+      <path d="M12 7.5c1.5-1.5 3.5-2.3 6-2.3 1 0 2 .1 3 .4v12.6c-1-.3-2-.4-3-.4-2.5 0-4.5.8-6 2.3Z" />
+      <path d="M12 7.5v12.6" />
+    </>
+  ),
 };
 
 export function Icon({

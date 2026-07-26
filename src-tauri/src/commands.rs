@@ -111,6 +111,30 @@ pub fn set_rating(state: State<'_, AppState>, id: i64, rating: Option<i64>) -> C
     db::require_book(&conn, id).map_err(s)
 }
 
+/// Hand a book to whatever application the OS has registered for its file type,
+/// and record that we did. The path is looked up from the library rather than
+/// taken from the caller, so the webview can't ask us to launch arbitrary files.
+#[tauri::command]
+pub fn open_book(state: State<'_, AppState>, id: i64) -> CmdResult<Book> {
+    let conn = state.conn.lock().map_err(s)?;
+    let book = db::require_book(&conn, id).map_err(s)?;
+
+    let path = PathBuf::from(&book.path);
+    if !path.is_file() {
+        return Err(format!(
+            "The file is no longer at {}. Rescan your library to update it.",
+            book.path
+        ));
+    }
+
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
+        format!("Couldn't open {}: {e}. Is a {} reader installed?", book.filename, book.format)
+    })?;
+
+    db::mark_opened(&conn, id, now_ts()).map_err(s)?;
+    db::require_book(&conn, id).map_err(s)
+}
+
 #[tauri::command]
 pub fn delete_book(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let conn = state.conn.lock().map_err(s)?;
