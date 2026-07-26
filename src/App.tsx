@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./index.css";
 import { api, assetUrl, Book, formatDuration, ProgressEvent, Settings } from "./api";
 import { Button, cx, Icon, Logo, Spinner } from "./ui";
+import { TITLE_BAR_HEIGHT } from "./platform";
 import Dashboard from "./pages/Dashboard";
 import Library from "./pages/Library";
 import Settings_ from "./pages/Settings";
@@ -119,7 +120,11 @@ export default function App() {
     <div className="flex h-full w-full text-slate-200">
       {/* Sidebar */}
       <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur">
-        <div className="flex items-center gap-2.5 px-5 py-5">
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2.5 px-5 py-5"
+          style={{ paddingTop: 20 + TITLE_BAR_HEIGHT }}
+        >
           <Logo className="h-9 w-9 shrink-0 rounded-lg shadow-lg shadow-violet-950/40" />
           <div>
             <div className="text-sm font-semibold leading-tight">Book Vault</div>

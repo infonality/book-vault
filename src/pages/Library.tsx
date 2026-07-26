@@ -107,6 +107,10 @@ export default function Library({
       height: 820,
       minWidth: 480,
       minHeight: 420,
+      // macOS only; ignored elsewhere. Matches the main window's chrome.
+      // Lowercase here: the JS API and the JSON config spell this differently.
+      titleBarStyle: "overlay",
+      hiddenTitle: true,
     });
     win.once("tauri://error", (e) => alert(`Couldn't open the reader: ${JSON.stringify(e.payload)}`));
     // Reading updates progress in its own window; refresh when it closes.

@@ -18,6 +18,7 @@ import {
   rangeForOffsets,
 } from "../reader-dom";
 import { cx, Icon, Spinner } from "../ui";
+import { IS_MAC, TRAFFIC_LIGHT_INSET } from "../platform";
 import {
   DEFAULT_PREFS,
   FONT_LABELS,
@@ -547,8 +548,13 @@ export default function Reader({
       }}
     >
       {/* Chrome */}
-      <header className="flex shrink-0 items-center gap-2 px-3 py-2">
-        {onClose && (
+      <header
+        data-tauri-drag-region
+        className="flex shrink-0 items-center gap-2 px-3 py-2"
+        style={{ paddingLeft: 12 + TRAFFIC_LIGHT_INSET }}
+      >
+        {/* macOS already provides a close button in the traffic lights. */}
+        {onClose && !IS_MAC && (
           <button
             onClick={onClose}
             title="Close (Esc)"

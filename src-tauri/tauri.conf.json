@@ -16,14 +16,18 @@
         "width": 1280,
         "height": 840,
         "minWidth": 940,
-        "minHeight": 640
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' asset: http://asset.localhost http://epubres.localhost epubres:; img-src 'self' data: blob: asset: http://asset.localhost http://epubres.localhost epubres: https://covers.openlibrary.org; font-src 'self' data: asset: http://asset.localhost http://epubres.localhost epubres:; media-src 'self' asset: http://asset.localhost http://epubres.localhost epubres:; connect-src 'self' ipc: http://ipc.localhost; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/covers/**"]
+        "scope": [
+          "$APPDATA/covers/**"
+        ]
       }
     }
   },

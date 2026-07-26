@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the library window and the reader windows it spawns",
-  "windows": ["main", "reader-*"],
+  "windows": [
+    "main",
+    "reader-*"
+  ],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",
@@ -11,6 +14,7 @@
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "core:window:allow-start-dragging"
   ]
 }
