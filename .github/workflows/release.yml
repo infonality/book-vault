@@ -90,13 +90,38 @@ jobs:
         run: npm ci
 
       - name: Build & release
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
+          # Only tag pushes create a release. A manual run leaves this empty so
+          # tauri-action just builds, and the installers come out as workflow
+          # artifacts below — test builds shouldn't land on the releases page.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: "Book Vault ${{ github.ref_name }}"
           releaseBody: "Download the installer for your platform below."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Manual runs: grab the installers from the run's Artifacts section.
+      # They expire after 14 days, which is right for a throwaway test build.
+      - name: Upload installers as artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bookvault-${{ matrix.platform }}
+          # Globbed rather than read from the action's outputs: the universal
+          # macOS build nests under its own target directory, and a glob copes
+          # with that without depending on the output format.
+          path: |
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*-setup.exe
+            src-tauri/target/**/release/bundle/**/*.deb
+            src-tauri/target/**/release/bundle/**/*.rpm
+            src-tauri/target/**/release/bundle/**/*.AppImage
+          retention-days: 14
+          if-no-files-found: error
