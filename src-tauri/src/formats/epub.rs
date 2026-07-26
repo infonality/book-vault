@@ -15,7 +15,7 @@ use super::{clean, count_words, strip_tags, CoverImage, ExtractedMeta};
 /// Rough words-per-page used to derive a page estimate from a real word count.
 const WORDS_PER_PAGE: i64 = 275;
 
-type Archive = ZipArchive<std::io::BufReader<std::fs::File>>;
+pub(crate) type Archive = ZipArchive<std::io::BufReader<std::fs::File>>;
 
 pub fn extract(path: &std::path::Path) -> Result<ExtractedMeta> {
     let file = std::fs::File::open(path)?;
@@ -84,30 +84,30 @@ pub fn extract(path: &std::path::Path) -> Result<ExtractedMeta> {
 // ---------- OPF parsing ----------
 
 #[derive(Default)]
-struct ManifestItem {
-    id: String,
-    href: String,
-    media_type: String,
-    properties: String,
+pub(crate) struct ManifestItem {
+    pub id: String,
+    pub href: String,
+    pub media_type: String,
+    pub properties: String,
 }
 
 #[derive(Default)]
-struct Opf {
-    title: Option<String>,
-    author: Option<String>,
-    publisher: Option<String>,
-    date: Option<String>,
-    language: Option<String>,
-    isbn: Option<String>,
-    description: Option<String>,
-    subjects: Vec<String>,
-    manifest: Vec<ManifestItem>,
-    spine: Vec<String>,
+pub(crate) struct Opf {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub publisher: Option<String>,
+    pub date: Option<String>,
+    pub language: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+    pub subjects: Vec<String>,
+    pub manifest: Vec<ManifestItem>,
+    pub spine: Vec<String>,
     /// `<meta name="cover" content="ID"/>` (epub2 cover pointer).
-    cover_meta_id: Option<String>,
+    pub cover_meta_id: Option<String>,
 }
 
-fn parse_opf(xml: &str) -> Opf {
+pub(crate) fn parse_opf(xml: &str) -> Opf {
     let mut opf = Opf::default();
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -260,7 +260,7 @@ fn attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<String> {
 
 // ---------- zip helpers ----------
 
-fn find_opf_path(zip: &mut Archive) -> Result<String> {
+pub(crate) fn find_opf_path(zip: &mut Archive) -> Result<String> {
     let container = read_entry_string(zip, "META-INF/container.xml")?;
     let mut reader = Reader::from_str(&container);
     let mut buf = Vec::new();
@@ -280,7 +280,7 @@ fn find_opf_path(zip: &mut Archive) -> Result<String> {
     Err(anyhow!("no rootfile in container.xml"))
 }
 
-fn read_entry_bytes(zip: &mut Archive, name: &str) -> Result<Vec<u8>> {
+pub(crate) fn read_entry_bytes(zip: &mut Archive, name: &str) -> Result<Vec<u8>> {
     let decoded = urlencoding::decode(name).map(|c| c.into_owned()).unwrap_or_else(|_| name.to_string());
     // Try the exact name, then a URL-decoded variant.
     for candidate in [name.to_string(), decoded] {
@@ -293,14 +293,14 @@ fn read_entry_bytes(zip: &mut Archive, name: &str) -> Result<Vec<u8>> {
     Err(anyhow!("entry not found: {name}"))
 }
 
-fn read_entry_string(zip: &mut Archive, name: &str) -> Result<String> {
+pub(crate) fn read_entry_string(zip: &mut Archive, name: &str) -> Result<String> {
     let bytes = read_entry_bytes(zip, name)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 // ---------- path helpers ----------
 
-fn parent_dir(path: &str) -> String {
+pub(crate) fn parent_dir(path: &str) -> String {
     match path.rfind('/') {
         Some(i) => path[..i].to_string(),
         None => String::new(),
@@ -308,7 +308,7 @@ fn parent_dir(path: &str) -> String {
 }
 
 /// Resolve an OPF-relative href to a zip entry path, collapsing `.`/`..`.
-fn resolve(base_dir: &str, href: &str) -> String {
+pub(crate) fn resolve(base_dir: &str, href: &str) -> String {
     let href = href.split(['#', '?']).next().unwrap_or(href);
     let combined = if base_dir.is_empty() {
         href.to_string()

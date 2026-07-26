@@ -111,6 +111,68 @@ pub fn set_rating(state: State<'_, AppState>, id: i64, rating: Option<i64>) -> C
     db::require_book(&conn, id).map_err(s)
 }
 
+// ---------------- built-in reader ----------------
+
+/// Everything the reader needs to open a book: reading order, contents, the
+/// saved position, and the base URL its frame resolves assets against.
+#[derive(serde::Serialize)]
+pub struct ReaderSession {
+    #[serde(flatten)]
+    pub book: crate::reader::ReaderBook,
+    pub resource_base: String,
+    pub locator: Option<String>,
+    pub title: String,
+}
+
+/// Base URL of the `epubres` protocol. Tauri maps custom schemes onto an
+/// http origin on Windows and Android, and a real scheme elsewhere.
+fn resource_base(id: i64) -> String {
+    #[cfg(any(windows, target_os = "android"))]
+    let base = format!("http://epubres.localhost/{id}/");
+    #[cfg(not(any(windows, target_os = "android")))]
+    let base = format!("epubres://localhost/{id}/");
+    base
+}
+
+#[tauri::command]
+pub fn reader_open(state: State<'_, AppState>, id: i64) -> CmdResult<ReaderSession> {
+    let (path, title, locator) = {
+        let conn = state.conn.lock().map_err(s)?;
+        let b = db::require_book(&conn, id).map_err(s)?;
+        (b.path, b.title, db::get_locator(&conn, id).map_err(s)?)
+    };
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("The file is no longer at {path}. Rescan your library."));
+    }
+    let book = crate::reader::open(std::path::Path::new(&path)).map_err(|e| format!("{e:#}"))?;
+    Ok(ReaderSession { book, resource_base: resource_base(id), locator, title })
+}
+
+#[tauri::command]
+pub fn reader_chapter(
+    state: State<'_, AppState>,
+    id: i64,
+    index: usize,
+) -> CmdResult<crate::reader::Chapter> {
+    let path = {
+        let conn = state.conn.lock().map_err(s)?;
+        db::require_book(&conn, id).map_err(s)?.path
+    };
+    crate::reader::chapter(std::path::Path::new(&path), index).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn reader_save_position(
+    state: State<'_, AppState>,
+    id: i64,
+    locator: String,
+    percent: f64,
+) -> CmdResult<Book> {
+    let conn = state.conn.lock().map_err(s)?;
+    db::save_locator(&conn, id, &locator, percent, now_ts()).map_err(s)?;
+    db::require_book(&conn, id).map_err(s)
+}
+
 /// Hand a book to whatever application the OS has registered for its file type,
 /// and record that we did. The path is looked up from the library rather than
 /// taken from the caller, so the webview can't ask us to launch arbitrary files.

@@ -66,6 +66,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     )?;
     // Columns added after 0.1.1 — existing libraries need them backfilled.
     add_column(conn, "books", "last_opened_at", "INTEGER")?;
+    // Reflowable text has no fixed pages, so the built-in reader remembers a
+    // position as spine index + character offset rather than a page number.
+    add_column(conn, "books", "locator", "TEXT")?;
     Ok(())
 }
 
@@ -125,7 +128,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 const BOOK_COLS: &str = "id, path, filename, format, size, title, author, series, publisher,
     published_date, language, isbn, description, category, subjects, cover_path, pages, words,
     words_estimated, status, current_page, rating, meta_status, meta_source, started_at,
-    finished_at, last_opened_at, added_at, updated_at";
+    finished_at, last_opened_at, locator, added_at, updated_at";
 
 fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -156,8 +159,9 @@ fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
         started_at: r.get(24)?,
         finished_at: r.get(25)?,
         last_opened_at: r.get(26)?,
-        added_at: r.get(27)?,
-        updated_at: r.get(28)?,
+        locator: r.get(27)?,
+        added_at: r.get(28)?,
+        updated_at: r.get(29)?,
     })
 }
 
@@ -355,6 +359,42 @@ pub fn mark_opened(conn: &Connection, id: i64, now: i64) -> Result<()> {
         params![id, now],
     )?;
     Ok(())
+}
+
+/// Remember where the built-in reader left off. `locator` is opaque JSON so the
+/// reader can evolve its position format without another migration; `percent`
+/// feeds the existing page-based progress so the dashboard keeps working.
+pub fn save_locator(conn: &Connection, id: i64, locator: &str, percent: f64, now: i64) -> Result<()> {
+    let book = get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))?;
+    let pages = book.pages.unwrap_or(0);
+    let page = if pages > 0 {
+        ((percent.clamp(0.0, 1.0) * pages as f64).round() as i64).clamp(0, pages)
+    } else {
+        book.current_page
+    };
+    // Reaching the end counts as finishing, matching set_progress's behaviour.
+    if pages > 0 && page >= pages {
+        conn.execute(
+            "UPDATE books SET locator=?2 WHERE id=?1",
+            params![id, locator],
+        )?;
+        return set_status(conn, id, "finished", now);
+    }
+    let started = book.started_at.unwrap_or(now);
+    let status = if book.status == "unread" { "reading" } else { &book.status };
+    conn.execute(
+        "UPDATE books SET locator=?2, current_page=?3, status=?4, started_at=?5, updated_at=?6
+         WHERE id=?1",
+        params![id, locator, page, status, started, now],
+    )?;
+    Ok(())
+}
+
+pub fn get_locator(conn: &Connection, id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row("SELECT locator FROM books WHERE id=?1", [id], |r| r.get(0))
+        .optional()?
+        .flatten())
 }
 
 pub fn set_rating(conn: &Connection, id: i64, rating: Option<i64>, now: i64) -> Result<()> {

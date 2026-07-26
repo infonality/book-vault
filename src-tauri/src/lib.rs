@@ -9,6 +9,7 @@ mod formats;
 mod metadata;
 mod models;
 mod pdfcover;
+mod reader;
 mod scanner;
 
 use std::sync::Mutex;
@@ -22,6 +23,47 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Serves assets out of an open book's archive: stylesheets, images and
+        // embedded fonts, so the publisher's own typography can render as
+        // intended. URLs look like `<base>/<book id>/<path inside the zip>`.
+        // The book's location comes from the library, never from the request,
+        // and `reader::resource` only resolves entries that exist in the zip.
+        .register_uri_scheme_protocol("epubres", |ctx, request| {
+            let empty = |code: u16| {
+                tauri::http::Response::builder()
+                    .status(code)
+                    .body(Vec::new())
+                    .unwrap()
+            };
+            let raw = request.uri().path().trim_start_matches('/').to_string();
+            let decoded = urlencoding::decode(&raw)
+                .map(|c| c.into_owned())
+                .unwrap_or(raw);
+            let Some((id_str, entry)) = decoded.split_once('/') else {
+                return empty(400);
+            };
+            let Ok(id) = id_str.parse::<i64>() else {
+                return empty(400);
+            };
+
+            let state = ctx.app_handle().state::<AppState>();
+            let book_path = match state.conn.lock() {
+                Ok(conn) => db::get_book(&conn, id).ok().flatten().map(|b| b.path),
+                Err(_) => None,
+            };
+            let Some(book_path) = book_path else {
+                return empty(404);
+            };
+
+            match reader::resource(std::path::Path::new(&book_path), entry) {
+                Ok((bytes, mime)) => tauri::http::Response::builder()
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "max-age=3600")
+                    .body(bytes)
+                    .unwrap(),
+                Err(_) => empty(404),
+            }
+        })
         .setup(|app| {
             // Library DB + cover cache live in the platform app-data dir.
             let data_dir = app.path().app_data_dir()?;
@@ -65,6 +107,9 @@ pub fn run() {
             commands::set_progress,
             commands::set_rating,
             commands::open_book,
+            commands::reader_open,
+            commands::reader_chapter,
+            commands::reader_save_position,
             commands::delete_book,
             commands::search_metadata,
             commands::apply_metadata,

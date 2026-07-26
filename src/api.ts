@@ -33,6 +33,8 @@ export interface Book {
   finished_at: number | null;
   /** Unix seconds; last time we handed the file to the system reader. */
   last_opened_at: number | null;
+  /** Opaque JSON position from the built-in reader. */
+  locator: string | null;
   added_at: number;
   updated_at: number;
 }
@@ -131,6 +133,45 @@ export const POPULAR_CATEGORIES: string[] = [
   "Favorites",
 ];
 
+// ---------------- built-in reader ----------------
+
+export interface SpineItem {
+  index: number;
+  path: string;
+  chars: number;
+}
+
+export interface TocEntry {
+  label: string;
+  spine_index: number | null;
+  fragment: string | null;
+  depth: number;
+}
+
+export interface ReaderSession {
+  spine: SpineItem[];
+  toc: TocEntry[];
+  total_chars: number;
+  /** Base URL the reader frame resolves the book's own assets against. */
+  resource_base: string;
+  locator: string | null;
+  title: string;
+}
+
+export interface Chapter {
+  index: number;
+  html: string;
+  /** Directory of this document inside the archive. */
+  dir: string;
+  chars: number;
+}
+
+/** Where the reader left off. Stored as a ratio so it survives reflow. */
+export interface Locator {
+  spine: number;
+  ratio: number;
+}
+
 export interface ProgressEvent {
   job: string;
   current: number;
@@ -158,6 +199,12 @@ export const api = {
   /** Open the file in the OS default reader for its type. */
   openBook: (id: number) => invoke<Book>("open_book", { id }),
   deleteBook: (id: number) => invoke<void>("delete_book", { id }),
+
+  readerOpen: (id: number) => invoke<ReaderSession>("reader_open", { id }),
+  readerChapter: (id: number, index: number) =>
+    invoke<Chapter>("reader_chapter", { id, index }),
+  readerSavePosition: (id: number, locator: string, percent: number) =>
+    invoke<Book>("reader_save_position", { id, locator, percent }),
 
   searchMetadata: (query: string) => invoke<MetaCandidate[]>("search_metadata", { query }),
   applyMetadata: (id: number, candidate: MetaCandidate) =>

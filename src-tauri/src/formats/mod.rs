@@ -2,7 +2,7 @@
 //! pulls whatever bibliographic data and size metrics it can from the file
 //! itself, plus an embedded cover image when one is present.
 
-mod epub;
+pub(crate) mod epub;
 mod mobi;
 mod pdf;
 

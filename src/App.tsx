@@ -31,6 +31,19 @@ export default function App() {
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
+  // WebView2's own menu offers reload and inspect, which mean nothing in a
+  // desktop app. Text fields keep theirs, since cut/copy/paste is genuinely
+  // useful there.
+  useEffect(() => {
+    const onMenu = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, [contenteditable='true']")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onMenu);
+    return () => document.removeEventListener("contextmenu", onMenu);
+  }, []);
+
   const loadSettings = useCallback(async () => {
     const s = await api.getSettings();
     setSettings(s);

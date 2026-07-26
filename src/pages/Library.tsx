@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   api,
   assetUrl,
@@ -80,12 +81,36 @@ export default function Library({
 
   const upsert = (b: Book) => setBooks((prev) => prev.map((x) => (x.id === b.id ? b : x)));
 
+  /**
+   * EPUBs open in their own reader window so reading sits alongside the
+   * library rather than covering it; other formats go to the OS.
+   */
   async function openInReader(book: Book) {
-    try {
-      upsert(await onOpen(book));
-    } catch (e) {
-      alert(String(e));
+    if (book.format.toLowerCase() !== "epub") {
+      try {
+        upsert(await onOpen(book));
+      } catch (e) {
+        alert(String(e));
+      }
+      return;
     }
+    const label = `reader-${book.id}`;
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    const win = new WebviewWindow(label, {
+      url: `index.html?book=${book.id}`,
+      title: book.title,
+      width: 1100,
+      height: 820,
+      minWidth: 480,
+      minHeight: 420,
+    });
+    win.once("tauri://error", (e) => alert(`Couldn't open the reader: ${JSON.stringify(e.payload)}`));
+    // Reading updates progress in its own window; refresh when it closes.
+    win.once("tauri://destroyed", () => onReload());
   }
 
   const counts = useMemo(() => {
@@ -286,6 +311,13 @@ export default function Library({
           onClose={() => setSelectedId(null)}
           onChange={upsert}
           onOpen={() => openInReader(selected)}
+          onOpenExternally={async () => {
+            try {
+              upsert(await onOpen(selected));
+            } catch (e) {
+              alert(String(e));
+            }
+          }}
           onDeleted={(id) => {
             setBooks((prev) => prev.filter((x) => x.id !== id));
             setSelectedId(null);
@@ -473,6 +505,7 @@ function BookDrawer({
   onChange,
   onDeleted,
   onOpen,
+  onOpenExternally,
 }: {
   book: Book;
   categories: string[];
@@ -480,6 +513,8 @@ function BookDrawer({
   onChange: (b: Book) => void;
   onDeleted: (id: number) => void;
   onOpen: () => Promise<void>;
+  /** Hands the file to the OS instead of the built-in reader. */
+  onOpenExternally: () => Promise<void>;
 }) {
   const [form, setForm] = useState<BookEdit>(toEdit(book));
   const [savingEdit, setSavingEdit] = useState(false);
@@ -603,6 +638,10 @@ function BookDrawer({
     }
   }
 
+  async function openExternally() {
+    await onOpenExternally();
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -655,10 +694,26 @@ function BookDrawer({
               {!opening && <Icon name="read" className="h-4 w-4" />}
               {opening ? "Opening…" : "Read now"}
             </Button>
-            <p className="mt-1.5 text-center text-[11px] text-slate-500">
-              Opens in your default {book.format.toUpperCase()} reader. We'll ask where you got to
-              when you come back.
-            </p>
+            {book.format.toLowerCase() === "epub" ? (
+              <>
+                <Button
+                  variant="subtle"
+                  className="mt-2 w-full justify-center"
+                  onClick={openExternally}
+                >
+                  <Icon name="open" className="h-4 w-4" /> Open in system reader
+                </Button>
+                <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                  Book Vault's reader opens in its own window and tracks your position as you
+                  go. The system reader won't report progress back.
+                </p>
+              </>
+            ) : (
+              <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                Opens in your default {book.format.toUpperCase()} reader. We'll ask where you got
+                to when you come back.
+              </p>
+            )}
           </div>
 
           {/* Status segmented control */}

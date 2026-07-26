@@ -50,6 +50,8 @@ pub struct Book {
     pub finished_at: Option<i64>,
     /// Last time the file was handed to the system's default reader.
     pub last_opened_at: Option<i64>,
+    /// Opaque JSON position from the built-in reader (spine index + offset).
+    pub locator: Option<String>,
     pub added_at: i64,
     pub updated_at: i64,
 }
