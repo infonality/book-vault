@@ -1,6 +1,10 @@
-//! Filesystem scanner: walks the books root, extracts metadata from every
-//! supported file, caches embedded covers, and registers each book in the
-//! library. Books whose files have disappeared are pruned.
+//! Filesystem scanner: walks the configured roots, extracts metadata from every
+//! supported file, caches embedded covers, and registers each entry in the
+//! library. Entries whose files have disappeared are pruned.
+//!
+//! Two roots are walked — books and comics — because a file's format can't say
+//! which it is; plenty of comics are PDFs. The folder decides, except for
+//! cbz/cbr, which are comics wherever they're found.
 
 use std::path::Path;
 
@@ -20,38 +24,66 @@ pub fn clean_name(stem: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Comic archives are comics no matter where they sit; everything else takes
+/// the kind of the root it was found under.
+fn kind_for(fmt: &str, root_kind: &str) -> String {
+    match fmt {
+        "cbz" | "cbr" => "comic".to_string(),
+        _ => root_kind.to_string(),
+    }
+}
+
 pub fn scan(
     conn: &Connection,
     books_root: &Path,
+    comics_root: &Path,
     covers_dir: &Path,
     words_per_page: i64,
     mut progress: impl FnMut(ProgressEvent),
 ) -> Result<ScanResult> {
     let mut result = ScanResult::default();
 
-    if !books_root.is_dir() {
-        anyhow::bail!("Books path does not exist or is not a folder: {}", books_root.display());
+    let books_ok = books_root.is_dir();
+    let comics_ok = comics_root.is_dir();
+    if !books_ok && !comics_ok {
+        anyhow::bail!(
+            "Neither folder exists. Books: {}. Comics: {}",
+            books_root.display(),
+            comics_root.display()
+        );
     }
 
     progress(ProgressEvent {
         job: "scan".into(),
         current: 0,
         total: 0,
-        message: "Discovering book files…".into(),
+        message: "Discovering files…".into(),
         done: false,
     });
 
-    // 1. Discover candidate files.
-    let mut candidates: Vec<(std::path::PathBuf, &'static str)> = Vec::new();
+    // 1. Discover candidate files across both roots. Comics are walked first
+    // so that a comics folder nested inside the books folder still wins.
+    let mut candidates: Vec<(std::path::PathBuf, &'static str, String)> = Vec::new();
     let mut live_paths: Vec<String> = Vec::new();
-    for entry in WalkDir::new(books_root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
-        if !entry.file_type().is_file() {
+    let mut seen = std::collections::HashSet::new();
+    let roots: [(&Path, &str, bool); 2] =
+        [(comics_root, "comic", comics_ok), (books_root, "book", books_ok)];
+    for (root, root_kind, ok) in roots {
+        if !ok {
             continue;
         }
-        let path = entry.path();
-        if let Some(fmt) = formats::detect_format(path) {
-            live_paths.push(path.to_string_lossy().to_string());
-            candidates.push((path.to_path_buf(), fmt));
+        for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let Some(fmt) = formats::detect_format(path) else { continue };
+            let key = path.to_string_lossy().to_string();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            live_paths.push(key);
+            candidates.push((path.to_path_buf(), fmt, kind_for(fmt, root_kind)));
         }
     }
     result.total = candidates.len();
@@ -59,7 +91,7 @@ pub fn scan(
 
     // 2. Extract + register each candidate.
     let now = now_ts();
-    for (i, (path, fmt)) in candidates.iter().enumerate() {
+    for (i, (path, fmt, kind)) in candidates.iter().enumerate() {
         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
@@ -86,6 +118,7 @@ pub fn scan(
             size,
             title,
             author: meta.author.clone(),
+            series: meta.series.clone(),
             publisher: meta.publisher.clone(),
             published_date: meta.published_date.clone(),
             language: meta.language.clone(),
@@ -97,6 +130,7 @@ pub fn scan(
             words: meta.words,
             words_estimated: meta.words_estimated,
             meta_status: if has_embedded_title { "embedded".into() } else { "none".into() },
+            kind: kind.clone(),
         };
 
         let (id, inserted) = db::upsert_scanned(conn, &scanned, now)?;

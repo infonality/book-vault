@@ -103,6 +103,13 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   bookmark: <path d="M6 3h12v18l-6-4-6 4Z" />,
+  comics: (
+    <>
+      <rect x="3" y="4" width="12" height="16" rx="1.6" />
+      <path d="M17 6.5h2.6A1.4 1.4 0 0 1 21 7.9v10.7a1.4 1.4 0 0 1-1.4 1.4H17" />
+      <path d="M6.5 8.5h5M6.5 12h5M6.5 15.5h3" />
+    </>
+  ),
   list: (
     <>
       <path d="M8 6h13M8 12h13M8 18h13" />

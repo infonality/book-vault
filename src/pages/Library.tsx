@@ -7,6 +7,7 @@ import {
   Book,
   BookEdit,
   formatCompact,
+  Kind,
   MetaCandidate,
   POPULAR_CATEGORIES,
   Status,
@@ -17,10 +18,15 @@ type SortKey = "title" | "author" | "category" | "status" | "progress" | "rating
 type StatusFilter = "all" | Status;
 type ViewMode = "list" | "grid";
 
-const VIEW_KEY = "bv.libraryView";
+/** Comics are cover-led, so they open in grid by default; books in list. */
+function viewKey(kind: Kind) {
+  return `bv.libraryView.${kind}`;
+}
 
-function loadViewMode(): ViewMode {
-  return localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
+function loadViewMode(kind: Kind): ViewMode {
+  const saved = localStorage.getItem(viewKey(kind));
+  if (saved === "grid" || saved === "list") return saved;
+  return kind === "comic" ? "grid" : "list";
 }
 
 const STATUS_TABS: { id: StatusFilter; label: string }[] = [
@@ -40,11 +46,14 @@ export default function Library({
   reloadToken,
   onReload,
   onOpen,
+  kind,
 }: {
   reloadToken: number;
   onReload: () => void;
   /** Hands the book to the system reader; resolves with the updated row. */
   onOpen: (book: Book) => Promise<Book>;
+  /** Which half of the library this view shows. */
+  kind: Kind;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -54,12 +63,12 @@ export default function Library({
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "title", dir: 1 });
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [view, setView] = useState<ViewMode>(loadViewMode);
+  const [view, setView] = useState<ViewMode>(() => loadViewMode(kind));
 
-  // Remember the last chosen layout across launches.
+  // Remember the last chosen layout per section, across launches.
   useEffect(() => {
-    localStorage.setItem(VIEW_KEY, view);
-  }, [view]);
+    localStorage.setItem(viewKey(kind), view);
+  }, [view, kind]);
 
   useEffect(() => {
     let alive = true;
@@ -67,7 +76,7 @@ export default function Library({
     Promise.all([api.listBooks(), api.listCategories()])
       .then(([b, c]) => {
         if (!alive) return;
-        setBooks(b);
+        setBooks(b.filter((x) => x.kind === kind));
         setCategories(c);
       })
       .catch(() => {})
@@ -75,7 +84,7 @@ export default function Library({
     return () => {
       alive = false;
     };
-  }, [reloadToken]);
+  }, [reloadToken, kind]);
 
   const selected = useMemo(() => books.find((b) => b.id === selectedId) ?? null, [books, selectedId]);
 
@@ -86,7 +95,7 @@ export default function Library({
    * library rather than covering it; other formats go to the OS.
    */
   async function openInReader(book: Book) {
-    if (book.format.toLowerCase() !== "epub") {
+    if (book.kind === "comic" || book.format.toLowerCase() !== "epub") {
       try {
         upsert(await onOpen(book));
       } catch (e) {
@@ -180,9 +189,18 @@ export default function Library({
     <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {kind === "comic" ? "Comics" : "Books"}
+          </h1>
           <p className="mt-1 text-sm text-slate-400">
-            {filtered.length.toLocaleString()} {filtered.length === 1 ? "book" : "books"}
+            {filtered.length.toLocaleString()}{" "}
+            {kind === "comic"
+              ? filtered.length === 1
+                ? "issue"
+                : "issues"
+              : filtered.length === 1
+                ? "book"
+                : "books"}
             {status !== "all" && ` · ${status}`}
           </p>
         </div>
@@ -262,7 +280,11 @@ export default function Library({
         </div>
       ) : filtered.length === 0 ? (
         <p className="py-10 text-center text-sm text-slate-500">
-          {books.length === 0 ? "No books yet — set your folder and scan." : "No books match these filters."}
+          {books.length === 0
+            ? kind === "comic"
+              ? "No comics yet — set your comics folder in Settings and scan."
+              : "No books yet — set your folder and scan."
+            : "Nothing matches these filters."}
         </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

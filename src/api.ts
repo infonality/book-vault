@@ -3,6 +3,9 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 export type Status = "unread" | "reading" | "finished";
+/** Comics live in their own root and their own section; format can't tell them
+ *  apart from books, since plenty of comics are PDFs. */
+export type Kind = "book" | "comic";
 
 export interface Book {
   id: number;
@@ -35,6 +38,8 @@ export interface Book {
   last_opened_at: number | null;
   /** Opaque JSON position from the built-in reader. */
   locator: string | null;
+  /** book | comic — which section of the library this belongs to. */
+  kind: Kind;
   added_at: number;
   updated_at: number;
 }
@@ -57,6 +62,7 @@ export interface BookEdit {
 
 export interface Settings {
   books_root: string;
+  comics_root: string;
   words_per_page: number;
 }
 
@@ -77,6 +83,8 @@ export interface DashboardStats {
   categories: CategoryStat[];
   recent_finished: Book[];
   in_progress: Book[];
+  total_comics: number;
+  finished_comics: number;
 }
 
 export interface MetaCandidate {

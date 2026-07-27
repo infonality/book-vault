@@ -89,6 +89,11 @@ fn migrate(conn: &Connection) -> Result<()> {
     // Reflowable text has no fixed pages, so the built-in reader remembers a
     // position as spine index + character offset rather than a page number.
     add_column(conn, "books", "locator", "TEXT")?;
+    // Comics live in their own root and their own section of the UI. A file's
+    // format can't decide this on its own — a comic is often a PDF — so the
+    // folder it came from does, and this records the answer.
+    add_column(conn, "books", "kind", "TEXT NOT NULL DEFAULT 'book'")?;
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_books_kind ON books(kind);")?;
     Ok(())
 }
 
@@ -132,12 +137,14 @@ pub fn load_settings(conn: &Connection) -> Result<Settings> {
     let words_per_page = g("words_per_page").parse::<i64>().unwrap_or(0);
     Ok(Settings {
         books_root: g("books_root"),
+        comics_root: g("comics_root"),
         words_per_page: if words_per_page > 0 { words_per_page } else { 275 },
     })
 }
 
 pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
     set_setting(conn, "books_root", &s.books_root)?;
+    set_setting(conn, "comics_root", &s.comics_root)?;
     let wpp = if s.words_per_page > 0 { s.words_per_page } else { 275 };
     set_setting(conn, "words_per_page", &wpp.to_string())?;
     Ok(())
@@ -148,7 +155,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 const BOOK_COLS: &str = "id, path, filename, format, size, title, author, series, publisher,
     published_date, language, isbn, description, category, subjects, cover_path, pages, words,
     words_estimated, status, current_page, rating, meta_status, meta_source, started_at,
-    finished_at, last_opened_at, locator, added_at, updated_at";
+    finished_at, last_opened_at, locator, kind, added_at, updated_at";
 
 fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -180,8 +187,9 @@ fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
         finished_at: r.get(25)?,
         last_opened_at: r.get(26)?,
         locator: r.get(27)?,
-        added_at: r.get(28)?,
-        updated_at: r.get(29)?,
+        kind: r.get(28)?,
+        added_at: r.get(29)?,
+        updated_at: r.get(30)?,
     })
 }
 
@@ -193,6 +201,7 @@ pub struct ScannedBook {
     pub size: i64,
     pub title: String,
     pub author: Option<String>,
+    pub series: Option<String>,
     pub publisher: Option<String>,
     pub published_date: Option<String>,
     pub language: Option<String>,
@@ -205,6 +214,8 @@ pub struct ScannedBook {
     pub words_estimated: bool,
     /// "embedded" if the file carried a title, otherwise "none".
     pub meta_status: String,
+    /// book | comic
+    pub kind: String,
 }
 
 /// Insert a newly-scanned book. If the path already exists, refresh only the
@@ -217,21 +228,21 @@ pub fn upsert_scanned(conn: &Connection, b: &ScannedBook, now: i64) -> Result<(i
     if let Some(id) = existing {
         // Keep it simple: only refresh size + filename so the row tracks the file.
         conn.execute(
-            "UPDATE books SET filename=?2, size=?3, updated_at=?4 WHERE id=?1",
-            params![id, b.filename, b.size, now],
+            "UPDATE books SET filename=?2, size=?3, kind=?4, updated_at=?5 WHERE id=?1",
+            params![id, b.filename, b.size, b.kind, now],
         )?;
         Ok((id, false))
     } else {
         conn.execute(
             "INSERT INTO books(
-                path, filename, format, size, title, author, publisher, published_date,
+                path, filename, format, size, title, author, series, publisher, published_date,
                 language, isbn, description, subjects, cover_path, pages, words,
-                words_estimated, meta_status, added_at, updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18)",
+                words_estimated, meta_status, kind, added_at, updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?20)",
             params![
-                b.path, b.filename, b.format, b.size, b.title, b.author, b.publisher,
+                b.path, b.filename, b.format, b.size, b.title, b.author, b.series, b.publisher,
                 b.published_date, b.language, b.isbn, b.description, b.subjects, b.cover_path,
-                b.pages, b.words, b.words_estimated as i64, b.meta_status, now
+                b.pages, b.words, b.words_estimated as i64, b.meta_status, b.kind, now
             ],
         )?;
         Ok((conn.last_insert_rowid(), true))
@@ -543,14 +554,18 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
     let one = |sql: &str| -> Result<i64> {
         Ok(conn.query_row(sql, [], |r| r.get::<_, i64>(0))?)
     };
-    let total_books = one("SELECT COUNT(*) FROM books")?;
-    let finished_books = one("SELECT COUNT(*) FROM books WHERE status='finished'")?;
-    let reading_books = one("SELECT COUNT(*) FROM books WHERE status='reading'")?;
-    let unread_books = one("SELECT COUNT(*) FROM books WHERE status='unread'")?;
+    let total_books = one("SELECT COUNT(*) FROM books WHERE kind='book'")?;
+    let finished_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='finished'")?;
+    let reading_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='reading'")?;
+    let unread_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='unread'")?;
     let pages_read =
-        one("SELECT COALESCE(SUM(pages),0) FROM books WHERE status='finished' AND pages IS NOT NULL")?;
+        one("SELECT COALESCE(SUM(pages),0) FROM books WHERE kind='book' AND status='finished' AND pages IS NOT NULL")?;
     let words_read =
-        one("SELECT COALESCE(SUM(words),0) FROM books WHERE status='finished' AND words IS NOT NULL")?;
+        one("SELECT COALESCE(SUM(words),0) FROM books WHERE kind='book' AND status='finished' AND words IS NOT NULL")?;
+
+    let total_comics = one("SELECT COUNT(*) FROM books WHERE kind='comic'")?;
+    let finished_comics =
+        one("SELECT COUNT(*) FROM books WHERE kind='comic' AND status='finished'")?;
 
     let avg_rating: Option<f64> = conn
         .query_row(
@@ -566,7 +581,7 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
         "SELECT COALESCE(NULLIF(category,''), 'Uncategorized') AS cat,
                 COUNT(*) AS total,
                 SUM(CASE WHEN status='finished' THEN 1 ELSE 0 END) AS finished
-         FROM books GROUP BY cat ORDER BY total DESC, cat COLLATE NOCASE",
+         FROM books WHERE kind='book' GROUP BY cat ORDER BY total DESC, cat COLLATE NOCASE",
     )?;
     let categories = stmt
         .query_map([], |r| {
@@ -581,11 +596,11 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
 
     let recent_finished = query_books(
         conn,
-        "WHERE status='finished' ORDER BY finished_at DESC LIMIT 6",
+        "WHERE kind='book' AND status='finished' ORDER BY finished_at DESC LIMIT 6",
     )?;
     let in_progress = query_books(
         conn,
-        "WHERE status='reading' ORDER BY updated_at DESC LIMIT 8",
+        "WHERE kind='book' AND status='reading' ORDER BY updated_at DESC LIMIT 8",
     )?;
 
     Ok(DashboardStats {
@@ -599,6 +614,8 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
         categories,
         recent_finished,
         in_progress,
+        total_comics,
+        finished_comics,
     })
 }
 

@@ -52,6 +52,9 @@ pub struct Book {
     pub last_opened_at: Option<i64>,
     /// Opaque JSON position from the built-in reader (spine index + offset).
     pub locator: Option<String>,
+    /// book | comic. Decided by which root the file was found under, except
+    /// for cbz/cbr which are comics wherever they live.
+    pub kind: String,
     pub added_at: i64,
     pub updated_at: i64,
 }
@@ -77,6 +80,9 @@ pub struct BookEdit {
 pub struct Settings {
     /// Root folder that holds the book files.
     pub books_root: String,
+    /// Root folder for comics. Kept separate from books because format alone
+    /// can't tell them apart — plenty of comics are PDFs.
+    pub comics_root: String,
     /// Estimate used to derive word counts when a real count isn't available.
     pub words_per_page: i64,
 }
@@ -105,6 +111,10 @@ pub struct DashboardStats {
     pub recent_finished: Vec<Book>,
     /// Books currently being read.
     pub in_progress: Vec<Book>,
+    /// Comics are counted separately: they have pages but no meaningful word
+    /// count, so folding them into the totals above would distort them.
+    pub total_comics: i64,
+    pub finished_comics: i64,
 }
 
 /// One metadata match returned from an Open Library search. Round-trips to the

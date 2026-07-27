@@ -9,7 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Library from "./pages/Library";
 import Settings_ from "./pages/Settings";
 
-export type View = "dashboard" | "library" | "settings";
+export type View = "dashboard" | "library" | "comics" | "settings";
 
 // Don't ask where someone got to if they bounced straight back — they probably
 // opened the wrong book, or the reader failed to take focus at all.
@@ -17,7 +17,8 @@ const MIN_SESSION_MS = 15_000;
 
 const NAV: { id: View; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
-  { id: "library", label: "Library", icon: "books" },
+  { id: "library", label: "Books", icon: "books" },
+  { id: "comics", label: "Comics", icon: "comics" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -102,7 +103,7 @@ export default function App() {
     };
   }, []);
 
-  const configured = !!settings?.books_root;
+  const configured = !!(settings?.books_root || settings?.comics_root);
 
   const doScan = useCallback(async () => {
     setScanning(true);
@@ -163,7 +164,7 @@ export default function App() {
           </Button>
           {!configured && (
             <p className="mt-2 px-1 text-[11px] leading-snug text-slate-500">
-              Set your books folder in Settings to get started.
+              Set a books or comics folder in Settings to get started.
             </p>
           )}
         </div>
@@ -182,7 +183,10 @@ export default function App() {
             />
           )}
           {view === "library" && (
-            <Library reloadToken={reloadToken} onReload={reload} onOpen={openBook} />
+            <Library reloadToken={reloadToken} onReload={reload} onOpen={openBook} kind="book" />
+          )}
+          {view === "comics" && (
+            <Library reloadToken={reloadToken} onReload={reload} onOpen={openBook} kind="comic" />
           )}
           {view === "settings" && (
             <Settings_

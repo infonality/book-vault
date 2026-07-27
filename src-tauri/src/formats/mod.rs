@@ -3,6 +3,7 @@
 //! itself, plus an embedded cover image when one is present.
 
 pub(crate) mod epub;
+mod comic;
 mod mobi;
 mod pdf;
 
@@ -22,6 +23,8 @@ pub struct CoverImage {
 pub struct ExtractedMeta {
     pub title: Option<String>,
     pub author: Option<String>,
+    /// Series name. Comics almost always have one; books rarely do.
+    pub series: Option<String>,
     pub publisher: Option<String>,
     pub published_date: Option<String>,
     pub language: Option<String>,
@@ -44,6 +47,9 @@ pub fn detect_format(path: &Path) -> Option<&'static str> {
     match ext.as_str() {
         "epub" => Some("epub"),
         "pdf" => Some("pdf"),
+        // Comic archives. CBZ is a ZIP; CBR is a RAR we can't open (see comic.rs).
+        "cbz" => Some("cbz"),
+        "cbr" => Some("cbr"),
         // Kindle formats all use the MOBI container family.
         "mobi" | "azw" | "azw3" => Some("mobi"),
         _ => None,
@@ -57,6 +63,9 @@ pub fn detect_format(path: &Path) -> Option<&'static str> {
 pub fn extract(path: &Path, format: &str, words_per_page: i64) -> ExtractedMeta {
     let result = match format {
         "epub" => epub::extract(path),
+        "cbz" => comic::extract(path),
+        // CBR is a RAR archive; we catalogue it by filename only.
+        "cbr" => Ok(ExtractedMeta::default()),
         "pdf" => pdf::extract(path, words_per_page),
         "mobi" => mobi::extract(path, words_per_page),
         _ => Ok(ExtractedMeta::default()),

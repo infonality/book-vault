@@ -70,13 +70,21 @@ pub fn dashboard_stats(state: State<'_, AppState>) -> CmdResult<DashboardStats> 
 pub fn scan_library(app: AppHandle, state: State<'_, AppState>) -> CmdResult<ScanResult> {
     let conn = state.conn.lock().map_err(s)?;
     let settings = db::load_settings(&conn).map_err(s)?;
-    if settings.books_root.trim().is_empty() {
-        return Err("Set your books folder in Settings first.".into());
+    if settings.books_root.trim().is_empty() && settings.comics_root.trim().is_empty() {
+        return Err("Set your books or comics folder in Settings first.".into());
     }
-    let root = PathBuf::from(&settings.books_root);
-    scanner::scan(&conn, &root, &state.covers_dir, settings.words_per_page, |ev| {
-        let _ = app.emit("scan-progress", ev);
-    })
+    let books = PathBuf::from(&settings.books_root);
+    let comics = PathBuf::from(&settings.comics_root);
+    scanner::scan(
+        &conn,
+        &books,
+        &comics,
+        &state.covers_dir,
+        settings.words_per_page,
+        |ev| {
+            let _ = app.emit("scan-progress", ev);
+        },
+    )
     .map_err(s)
 }
 
