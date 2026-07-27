@@ -97,24 +97,25 @@ pub struct CategoryStat {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardStats {
-    pub total_books: i64,
-    pub finished_books: i64,
-    pub reading_books: i64,
-    pub unread_books: i64,
-    /// Sum of pages across finished books.
+    /// Finished books and comics, counted separately.
+    pub books_read: i64,
+    pub comics_read: i64,
+    /// Pages across everything finished — books and comics together, since a
+    /// page read is a page read.
     pub pages_read: i64,
-    /// Sum of words across finished books.
-    pub words_read: i64,
-    pub avg_rating: Option<f64>,
+    /// In progress, both kinds.
+    pub currently_reading: i64,
+
+    pub total_books: i64,
+    pub total_comics: i64,
+    pub unread: i64,
+    pub finished: i64,
+
     pub categories: Vec<CategoryStat>,
     /// Most recently finished books (up to a handful) for the dashboard feed.
     pub recent_finished: Vec<Book>,
     /// Books currently being read.
     pub in_progress: Vec<Book>,
-    /// Comics are counted separately: they have pages but no meaningful word
-    /// count, so folding them into the totals above would distort them.
-    pub total_comics: i64,
-    pub finished_comics: i64,
 }
 
 /// One metadata match returned from an Open Library search. Round-trips to the

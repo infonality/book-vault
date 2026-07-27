@@ -6,7 +6,6 @@ import {
   assetUrl,
   Book,
   BookEdit,
-  formatCompact,
   Kind,
   MetaCandidate,
   POPULAR_CATEGORIES,
@@ -14,7 +13,7 @@ import {
 } from "../api";
 import { Badge, Button, Icon, Spinner, StarRating, cx, statusMeta } from "../ui";
 
-type SortKey = "title" | "author" | "category" | "status" | "progress" | "rating" | "pages" | "words";
+type SortKey = "title" | "author" | "category" | "status" | "progress" | "rating" | "pages";
 type StatusFilter = "all" | Status;
 type ViewMode = "list" | "grid";
 
@@ -164,8 +163,6 @@ export default function Library({
           return b.rating ?? -1;
         case "pages":
           return b.pages ?? -1;
-        case "words":
-          return b.words ?? -1;
         default:
           return b.title.toLowerCase();
       }
@@ -309,8 +306,7 @@ export default function Library({
                 <Th onClick={() => toggleSort("status")} sort={sort} col="status">Status</Th>
                 <Th onClick={() => toggleSort("progress")} sort={sort} col="progress">Progress</Th>
                 <Th onClick={() => toggleSort("rating")} sort={sort} col="rating">Rating</Th>
-                <Th onClick={() => toggleSort("pages")} sort={sort} col="pages" className="text-right">Pages</Th>
-                <Th onClick={() => toggleSort("words")} sort={sort} col="words" className="pr-4 text-right">Words</Th>
+                <Th onClick={() => toggleSort("pages")} sort={sort} col="pages" className="pr-4 text-right">Pages</Th>
               </tr>
             </thead>
             <tbody>
@@ -452,16 +448,8 @@ function BookRow({
       <td className="px-3">
         {book.rating != null ? <StarRating value={book.rating} size="h-3.5 w-3.5" /> : <span className="text-slate-600">—</span>}
       </td>
-      <td className="px-3 text-right tabular-nums text-slate-300">{book.pages?.toLocaleString() ?? "—"}</td>
       <td className="py-2 pl-3 pr-4 text-right tabular-nums text-slate-300">
-        {book.words != null ? (
-          <span title={book.words.toLocaleString()}>
-            {book.words_estimated ? "~" : ""}
-            {formatCompact(book.words)}
-          </span>
-        ) : (
-          "—"
-        )}
+        {book.pages?.toLocaleString() ?? "—"}
       </td>
     </tr>
   );
@@ -858,7 +846,7 @@ function BookDrawer({
                 <input className={inputCls} value={form.published_date ?? ""} onChange={(e) => set("published_date", e.target.value)} />
               </Field>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Language">
                 <input className={inputCls} value={form.language ?? ""} onChange={(e) => set("language", e.target.value)} />
               </Field>
@@ -868,14 +856,6 @@ function BookDrawer({
                   className={inputCls}
                   value={form.pages ?? ""}
                   onChange={(e) => set("pages", e.target.value ? parseInt(e.target.value) : null)}
-                />
-              </Field>
-              <Field label="Words">
-                <input
-                  type="number"
-                  className={inputCls}
-                  value={form.words ?? ""}
-                  onChange={(e) => set("words", e.target.value ? parseInt(e.target.value) : null)}
                 />
               </Field>
             </div>
@@ -894,9 +874,6 @@ function BookDrawer({
               <Button variant="primary" busy={savingEdit} onClick={saveEdit} disabled={!dirty || !form.title.trim()}>
                 {!savingEdit && <Icon name="check" className="h-4 w-4" />} Save changes
               </Button>
-              {book.words_estimated && (
-                <span className="text-[11px] text-slate-500">Word count is estimated</span>
-              )}
             </div>
           </div>
 

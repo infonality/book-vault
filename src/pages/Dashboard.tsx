@@ -51,7 +51,7 @@ export default function Dashboard({
           body="Point Book Vault at the folder that holds your books (EPUB, PDF, MOBI), then scan to build your library."
           action={<Button variant="primary" onClick={() => goto("settings")}>Open Settings</Button>}
         />
-      ) : stats && stats.total_books === 0 ? (
+      ) : stats && stats.total_books + stats.total_comics === 0 ? (
         <EmptyState
           title="No books indexed yet"
           body="Add book files to your folder, then run a scan to index them and pull their metadata."
@@ -65,12 +65,12 @@ export default function Dashboard({
         <>
           {/* Headline stats */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label="Books read" value={stats.finished_books.toLocaleString()} icon="check" tone="green" />
+            <StatCard label="Books read" value={stats.books_read.toLocaleString()} icon="check" tone="green" />
+            <StatCard label="Comics read" value={stats.comics_read.toLocaleString()} icon="comics" tone="amber" />
             <StatCard label="Pages read" value={formatCompact(stats.pages_read)} icon="pages" tone="teal" />
-            <StatCard label="Words read" value={formatCompact(stats.words_read)} icon="words" tone="amber" />
             <StatCard
               label="Currently reading"
-              value={stats.reading_books.toLocaleString()}
+              value={stats.currently_reading.toLocaleString()}
               icon="book"
               tone="blue"
             />
@@ -79,12 +79,9 @@ export default function Dashboard({
           {/* Secondary line */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <MiniStat label="Total books" value={stats.total_books.toLocaleString()} />
-            <MiniStat label="Unread" value={stats.unread_books.toLocaleString()} />
-            <MiniStat label="Finished" value={stats.finished_books.toLocaleString()} />
-            <MiniStat
-              label="Avg rating"
-              value={stats.avg_rating != null ? `${stats.avg_rating.toFixed(1)} ★` : "—"}
-            />
+            <MiniStat label="Total comics" value={stats.total_comics.toLocaleString()} />
+            <MiniStat label="Unread" value={stats.unread.toLocaleString()} />
+            <MiniStat label="Finished" value={stats.finished.toLocaleString()} />
           </div>
 
           {/* Currently reading */}

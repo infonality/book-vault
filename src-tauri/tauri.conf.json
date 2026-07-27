@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Book Vault",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "identifier": "com.kas.bookvault",
   "build": {
     "beforeDevCommand": "npm run dev",

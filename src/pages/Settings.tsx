@@ -11,7 +11,6 @@ export default function SettingsPage({
 }) {
   const [booksRoot, setBooksRoot] = useState("");
   const [comicsRoot, setComicsRoot] = useState("");
-  const [wpp, setWpp] = useState(275);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -19,7 +18,6 @@ export default function SettingsPage({
     if (settings) {
       setBooksRoot(settings.books_root ?? "");
       setComicsRoot(settings.comics_root ?? "");
-      setWpp(settings.words_per_page || 275);
     }
   }, [settings]);
 
@@ -40,7 +38,9 @@ export default function SettingsPage({
       await api.saveSettings({
         books_root: booksRoot.trim(),
         comics_root: comicsRoot.trim(),
-        words_per_page: Math.max(1, wpp || 275),
+        // Still stored: it's what turns an EPUB's word count into a page
+        // estimate, since EPUBs have no pages of their own.
+        words_per_page: settings?.words_per_page || 275,
       });
       await onSaved();
       setSaved(true);
@@ -57,7 +57,7 @@ export default function SettingsPage({
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Where your books and comics live, and how metrics are estimated.
+          Where your books and comics live.
         </p>
       </header>
 
@@ -98,21 +98,6 @@ export default function SettingsPage({
               <Icon name="folder" className="h-4 w-4" /> Browse
             </Button>
           </div>
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-sm font-medium">Words per page (estimate)</label>
-          <p className="mb-2 text-xs text-slate-500">
-            Used to estimate word counts for PDFs and Kindle files, which don't report a real count.
-            EPUB word counts are measured directly from the text.
-          </p>
-          <input
-            type="number"
-            min={1}
-            value={wpp}
-            onChange={(e) => setWpp(parseInt(e.target.value) || 0)}
-            className="w-32 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-teal-500/50"
-          />
         </div>
 
         <div className="flex items-center gap-3 pt-1">

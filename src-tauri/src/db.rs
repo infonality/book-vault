@@ -554,27 +554,19 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
     let one = |sql: &str| -> Result<i64> {
         Ok(conn.query_row(sql, [], |r| r.get::<_, i64>(0))?)
     };
+
+    let books_read = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='finished'")?;
+    let comics_read = one("SELECT COUNT(*) FROM books WHERE kind='comic' AND status='finished'")?;
     let total_books = one("SELECT COUNT(*) FROM books WHERE kind='book'")?;
-    let finished_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='finished'")?;
-    let reading_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='reading'")?;
-    let unread_books = one("SELECT COUNT(*) FROM books WHERE kind='book' AND status='unread'")?;
-    let pages_read =
-        one("SELECT COALESCE(SUM(pages),0) FROM books WHERE kind='book' AND status='finished' AND pages IS NOT NULL")?;
-    let words_read =
-        one("SELECT COALESCE(SUM(words),0) FROM books WHERE kind='book' AND status='finished' AND words IS NOT NULL")?;
-
     let total_comics = one("SELECT COUNT(*) FROM books WHERE kind='comic'")?;
-    let finished_comics =
-        one("SELECT COUNT(*) FROM books WHERE kind='comic' AND status='finished'")?;
+    let unread = one("SELECT COUNT(*) FROM books WHERE status='unread'")?;
+    let finished = one("SELECT COUNT(*) FROM books WHERE status='finished'")?;
+    let currently_reading = one("SELECT COUNT(*) FROM books WHERE status='reading'")?;
 
-    let avg_rating: Option<f64> = conn
-        .query_row(
-            "SELECT AVG(rating) FROM books WHERE rating IS NOT NULL",
-            [],
-            |r| r.get::<_, Option<f64>>(0),
-        )
-        .optional()?
-        .flatten();
+    // Totals move only when something is finished — part-read pages don't
+    // count, so the number never goes backwards or depends on a guess.
+    let pages_read =
+        one("SELECT COALESCE(SUM(pages),0) FROM books WHERE status='finished' AND pages IS NOT NULL")?;
 
     // Category rollup (books without a category grouped under "Uncategorized").
     let mut stmt = conn.prepare(
@@ -596,26 +588,25 @@ pub fn dashboard(conn: &Connection) -> Result<DashboardStats> {
 
     let recent_finished = query_books(
         conn,
-        "WHERE kind='book' AND status='finished' ORDER BY finished_at DESC LIMIT 6",
+        "WHERE status='finished' ORDER BY finished_at DESC LIMIT 6",
     )?;
     let in_progress = query_books(
         conn,
-        "WHERE kind='book' AND status='reading' ORDER BY updated_at DESC LIMIT 8",
+        "WHERE status='reading' ORDER BY updated_at DESC LIMIT 8",
     )?;
 
     Ok(DashboardStats {
-        total_books,
-        finished_books,
-        reading_books,
-        unread_books,
+        books_read,
+        comics_read,
         pages_read,
-        words_read,
-        avg_rating,
+        currently_reading,
+        total_books,
+        total_comics,
+        unread,
+        finished,
         categories,
         recent_finished,
         in_progress,
-        total_comics,
-        finished_comics,
     })
 }
 

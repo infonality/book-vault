@@ -73,18 +73,18 @@ export interface CategoryStat {
 }
 
 export interface DashboardStats {
-  total_books: number;
-  finished_books: number;
-  reading_books: number;
-  unread_books: number;
+  books_read: number;
+  comics_read: number;
+  /** Books and comics combined — a page read is a page read. */
   pages_read: number;
-  words_read: number;
-  avg_rating: number | null;
+  currently_reading: number;
+  total_books: number;
+  total_comics: number;
+  unread: number;
+  finished: number;
   categories: CategoryStat[];
   recent_finished: Book[];
   in_progress: Book[];
-  total_comics: number;
-  finished_comics: number;
 }
 
 export interface MetaCandidate {
@@ -278,17 +278,7 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-/** "18 min" / "1 h 25 min" — used for how long a reading session ran. */
-export function formatDuration(seconds: number): string {
-  const mins = Math.round(seconds / 60);
-  if (mins < 1) return "under a minute";
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}
-
-/** Compact number formatting for large word/page totals. */
+/** Compact number formatting for large page totals. */
 export function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
