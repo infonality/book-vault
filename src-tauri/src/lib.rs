@@ -1,4 +1,4 @@
-//! Book Vault — personal ebook library & reading tracker. Rust core entry point:
+//! Shelfmark — personal library and reader for ebooks and comics. Rust core entry point:
 //! wires up SQLite state, the HTTP client, and the Tauri command surface.
 
 mod commands;
@@ -82,7 +82,7 @@ pub fn run() {
             }
 
             let http = reqwest::Client::builder()
-                .user_agent("BookVault/0.1 (personal library manager)")
+                .user_agent("Shelfmark/0.4 (personal library manager)")
                 .timeout(Duration::from_secs(30))
                 .build()
                 .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;

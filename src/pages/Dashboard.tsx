@@ -48,13 +48,13 @@ export default function Dashboard({
       ) : !configured ? (
         <EmptyState
           title="Let’s set things up"
-          body="Point Book Vault at the folder that holds your books (EPUB, PDF, MOBI), then scan to build your library."
+          body="Point Shelfmark at the folder that holds your books (EPUB, PDF, MOBI) and, if you have them, a second folder for comics (CBZ, CBR, PDF). Then scan to build your library."
           action={<Button variant="primary" onClick={() => goto("settings")}>Open Settings</Button>}
         />
       ) : stats && stats.total_books + stats.total_comics === 0 ? (
         <EmptyState
-          title="No books indexed yet"
-          body="Add book files to your folder, then run a scan to index them and pull their metadata."
+          title="Nothing indexed yet"
+          body="Add books or comics to your folders, then run a scan to index them and pull their metadata."
           action={
             <Button variant="primary" busy={scanning} onClick={onScan}>
               <Icon name="scan" className="h-4 w-4" /> Scan Books

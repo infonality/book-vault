@@ -118,7 +118,7 @@ export default function SettingsPage({
           <Icon name="sparkles" className="h-4 w-4 text-teal-400" /> About metadata
         </h2>
         <p className="leading-relaxed">
-          Book Vault first reads metadata embedded in each file. From a book's detail panel you can also
+          Shelfmark first reads metadata embedded in each file. From a book's detail panel you can also
           fetch richer data (cover, page count, subjects, description) from{" "}
           <span className="text-slate-200">Open Library</span> — a free, open catalogue. Goodreads shut its
           public API in 2020, so Open Library stands in for it. If nothing matches, just type the details in

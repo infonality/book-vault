@@ -63,7 +63,7 @@ fn make_pdf(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     // Document Info so metadata extraction has something to read, too.
     let info_id = doc.add_object(dictionary! {
         "Title" => Object::string_literal("A Sample PDF"),
-        "Author" => Object::string_literal("Book Vault"),
+        "Author" => Object::string_literal("Shelfmark"),
     });
     doc.trailer.set("Info", info_id);
     doc.save(&out)?;

@@ -165,7 +165,7 @@ export function Icon({
   );
 }
 
-/** The Book Vault mark — mirrors the app icon (see app-icon.svg). */
+/** The Shelfmark mark — mirrors the app icon (see app-icon.svg). */
 export function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 1024 1024" className={className} xmlns="http://www.w3.org/2000/svg">

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    bookvault_lib::run()
+    shelfmark_lib::run()
 }

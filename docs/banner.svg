@@ -37,15 +37,15 @@
   </g>
 
   <text x="272" y="212" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif"
-        font-size="76" font-weight="600" fill="#f5f3ff" letter-spacing="-1.5">Book Vault</text>
+        font-size="76" font-weight="600" fill="#f5f3ff" letter-spacing="-1.5">Shelfmark</text>
   <text x="274" y="262" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif"
-        font-size="27" font-weight="400" fill="#c4b5fd">Your ebook library, catalogued and tracked.</text>
+        font-size="27" font-weight="400" fill="#c4b5fd">Your books and comics, catalogued, read and tracked.</text>
 
   <g font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" fill="#a78bfa">
-    <text x="274" y="318">EPUB · PDF · MOBI</text>
-    <text x="470" y="318" fill="#6d5a99">|</text>
-    <text x="492" y="318">Offline &amp; local</text>
-    <text x="640" y="318" fill="#6d5a99">|</text>
-    <text x="662" y="318">Windows · macOS · Linux</text>
+    <text x="274" y="318">EPUB · PDF · MOBI · CBZ</text>
+    <text x="512" y="318" fill="#6d5a99">|</text>
+    <text x="534" y="318">Offline &amp; local</text>
+    <text x="682" y="318" fill="#6d5a99">|</text>
+    <text x="704" y="318">Windows · macOS · Linux</text>
   </g>
 </svg>

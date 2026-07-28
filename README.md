@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.png" alt="Book Vault — your ebook library, catalogued and tracked" width="100%">
+  <img src="docs/banner.png" alt="Shelfmark — your books and comics, catalogued, read and tracked" width="100%">
 </p>
 
 <p align="center">
@@ -9,9 +9,10 @@
   <img src="https://img.shields.io/badge/data-100%25%20local-a78bfa?style=flat-square" alt="100% local">
 </p>
 
-Point Book Vault at a folder of ebooks and it builds you a proper library: it reads
-the metadata out of each file, fetches cover art and page counts for anything
-missing, and then tracks what you've read.
+Point Shelfmark at your folders and it builds you a proper library: it reads the
+metadata out of every ebook and comic, fetches cover art and page counts for
+anything missing, reads your EPUBs in a reader of its own, and tracks what
+you've finished.
 
 Everything stays on your machine — a single SQLite file and a folder of cached
 covers. There's no account, no sync, and no telemetry.
@@ -20,10 +21,19 @@ covers. There's no account, no sync, and no telemetry.
 
 ## Features
 
-**Scans a folder, understands the files**
+**Scans your folders, understands the files**
 Walks a directory (subfolders included) and indexes every `.epub`, `.pdf`,
 `.mobi`, `.azw`, and `.azw3`, reading title, author, publisher, subjects, ISBN,
-description, page count, and word count out of the file itself.
+description and page count out of the file itself. Comics get a folder of their
+own, because a comic is often just a PDF and only you know which is which.
+
+**Keeps comics in order**
+`.cbz` and `.cbr` sit in a separate Comics section, tagged from `ComicInfo.xml`
+where a file carries one. Volumes of the same run collapse into a single shelf
+tile that opens to reveal the issues underneath — so a hundred volumes of one
+title don't bury everything else. Series names are read from the file's tags or,
+failing that, off the filename: `Vol. 3`, `#12`, `v03` and `第100巻` all parse,
+and you can always set the series by hand.
 
 **Finds covers, even when the file has none**
 EPUB and MOBI covers are lifted straight from the file. PDFs don't carry one, so
@@ -49,23 +59,26 @@ the text itself, so changing the type size or resizing the window never moves
 them.
 
 **Or hands them to whatever you already use**
-PDFs go straight to your system's default application, and EPUBs can too from
-the details panel. Book Vault marks the book as started and asks how far you got
-when you come back, since an external reader can't report position back.
+PDFs and comics go straight to your system's default application — YACReader,
+SumatraPDF, Preview, whatever you have — and EPUBs can too, from the details
+panel. An external reader can't report your position back, so those you mark off
+yourself.
 
 **Tracks your reading**
-A sortable table — or a cover grid — of every book with reading status, progress,
-a 1–5 star rating, and free-text categories with a preset picker. Reading an EPUB
-in the built-in reader updates progress on its own; nothing to type in.
+A sortable table — or a cover grid — of everything you own, with reading status,
+progress, a 1–5 star rating, and free-text categories with a preset picker.
+Reading an EPUB in the built-in reader updates progress on its own; nothing to
+type in.
 
 **Shows you the numbers**
-A dashboard totalling books, pages, and words read, what you're part-way through,
-and a breakdown by category.
+A dashboard counting books read, comics read, pages read and what you're
+part-way through, plus a breakdown by category. Totals move when you finish
+something, so they mean what they say.
 
 ## Install
 
 Grab the installer for your platform from the
-[latest release](https://github.com/infonality/book-vault/releases/latest).
+[latest release](https://github.com/infonality/shelfmark/releases/latest).
 
 | Platform | File |
 | --- | --- |
@@ -77,23 +90,27 @@ The builds aren't code-signed, so the first launch needs a nudge: on macOS
 right-click the app and choose **Open**; on Windows click **More info → Run
 anyway**; the AppImage needs `chmod +x` before it will run.
 
-Then open **Settings**, choose the folder your books live in, and hit **Scan
-Books**.
+Then open **Settings**, choose the folder your books live in — and a second one
+for comics, if you keep them — and hit **Scan**.
 
 ## How the metadata works
 
-What can be read from a file varies a lot by format, so Book Vault takes what it
+What can be read from a file varies a lot by format, so Shelfmark takes what it
 can get and lets you correct the rest — every field stays editable.
 
-| Format | Metadata | Pages | Words | Cover |
-| --- | --- | --- | --- | --- |
-| EPUB | Full Dublin Core from the OPF | Estimated from word count | **Counted** from the text | Embedded |
-| PDF | Info dictionary | **Exact** page count | Estimated from pages | First page, rendered |
-| MOBI / AZW | EXTH header | Estimated | Estimated | Embedded when present |
+| Format | Metadata | Pages | Cover |
+| --- | --- | --- | --- |
+| EPUB | Full Dublin Core from the OPF | Estimated | Embedded |
+| PDF | Info dictionary | **Exact** page count | First page, rendered |
+| MOBI / AZW | EXTH header | Estimated | Embedded when present |
+| CBZ | `ComicInfo.xml` when present | **Exact** — one per image | First page |
+| CBR | Filename only | — | — |
 
-Estimated word counts are shown with a `~` and use a words-per-page figure you
-can change in Settings. Pages and words only count toward your totals once a book
-is marked finished.
+Pages only count toward your totals once something is marked finished.
+
+CBR is deliberately left unopened. RAR's reference decoder ships under a licence
+that can't be vendored into an MIT project, so a `.cbr` is catalogued from its
+filename and nothing more. Repack it as a `.cbz` and it gets the full treatment.
 
 Reflowable text has no fixed pages, so the reader stores your position as a spine
 index plus a ratio through that chapter rather than a page number — it survives a
@@ -158,6 +175,7 @@ src/                    React + TypeScript UI
   api.ts                typed wrappers over the Tauri command surface
   ui.tsx                shared primitives (icons, buttons, star rating)
   reader-prefs.ts       themes, typefaces and spacing for the reader
+  series.ts             groups comics into series from tags or filenames
   pages/                Dashboard, Library (table/grid + drawer), Settings
     Reader.tsx          paginated reader; Books-style presentation
     ReaderWindow.tsx    host for the standalone reader window
@@ -165,14 +183,18 @@ src-tauri/src/
   commands.rs           Tauri IPC boundary
   db.rs                 SQLite schema and queries
   scanner.rs            folder walk, registration, cover refresh
-  formats/              epub / pdf / mobi metadata extraction
+  formats/              epub / pdf / mobi / comic metadata extraction
   reader.rs             spine, contents, sanitising, asset serving
   pdfcover.rs           PDF first-page rendering via PDFium
   metadata.rs           Open Library search and cover download
 ```
 
 Your library lives in the platform app-data directory — `library.db` plus a
-`covers/` folder. Book Vault never modifies the ebook files themselves.
+`covers/` folder. Shelfmark never modifies the files themselves.
+
+The bundle identifier is still `com.kas.bookvault`, from when this was called
+Book Vault. That string is what picks the app-data directory, so changing it
+would strand every existing library. It's invisible to users; leave it be.
 
 ## Tests
 

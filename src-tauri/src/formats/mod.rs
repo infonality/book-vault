@@ -122,7 +122,7 @@ mod tests {
 
     /// Build a small, spec-compliant EPUB in a temp file and return its path.
     fn build_epub() -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("bookvault_test_{}.epub", std::process::id()));
+        let path = std::env::temp_dir().join(format!("shelfmark_test_{}.epub", std::process::id()));
         let mut zip = ZipWriter::new(std::fs::File::create(&path).unwrap());
         let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);

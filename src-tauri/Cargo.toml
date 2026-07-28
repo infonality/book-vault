@@ -1,7 +1,7 @@
 [package]
-name = "bookvault"
-version = "0.3.2"
-description = "Book Vault - personal ebook library & reading tracker"
+name = "shelfmark"
+version = "0.4.0"
+description = "Shelfmark - personal library and reader for ebooks and comics"
 authors = ["Kas"]
 edition = "2021"
 license = "MIT"
@@ -9,7 +9,7 @@ license = "MIT"
 [lib]
 # The `_lib` suffix keeps the lib name unique so it won't conflict with the bin
 # name (a Windows-specific cargo issue, see rust-lang/cargo#8519).
-name = "bookvault_lib"
+name = "shelfmark_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -98,7 +98,7 @@ mod tests {
 
     /// Build a valid one-page (200x300) PDF at a temp path.
     fn build_pdf() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("bookvault_test_{}.pdf", std::process::id()));
+        let path = std::env::temp_dir().join(format!("shelfmark_test_{}.pdf", std::process::id()));
         let mut doc = Document::with_version("1.5");
         let pages_id = doc.new_object_id();
         let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
