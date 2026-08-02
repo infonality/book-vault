@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, assetUrl, Book, DashboardStats, formatCompact } from "../api";
+import { openReaderWindow, readsInApp } from "../open-book";
 import { Button, Icon, Spinner, StarRating, cx } from "../ui";
 import type { View } from "../App";
 
@@ -7,17 +8,38 @@ export default function Dashboard({
   reloadToken,
   goto,
   onScan,
+  onOpen,
+  onReload,
   scanning,
   configured,
 }: {
   reloadToken: number;
   goto: (v: View) => void;
   onScan: () => void;
+  /** Hand a book the built-in reader can't show to the OS. */
+  onOpen: (b: Book) => Promise<Book>;
+  onReload: () => void;
   scanning: boolean;
   configured: boolean;
 }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+
+  /** Clicking a book here opens it, exactly as it does in the library. */
+  const open = useCallback(
+    async (book: Book) => {
+      if (!readsInApp(book)) {
+        try {
+          await onOpen(book);
+        } catch (e) {
+          alert(String(e));
+        }
+        return;
+      }
+      await openReaderWindow(book, onReload);
+    },
+    [onOpen, onReload]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -67,7 +89,7 @@ export default function Dashboard({
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label="Books read" value={stats.books_read.toLocaleString()} icon="check" tone="green" />
             <StatCard label="Comics read" value={stats.comics_read.toLocaleString()} icon="comics" tone="amber" />
-            <StatCard label="Pages read" value={formatCompact(stats.pages_read)} icon="pages" tone="teal" />
+            <StatCard label="Pages read" value={formatCompact(stats.pages_read)} icon="pages" tone="accent" />
             <StatCard
               label="Currently reading"
               value={stats.currently_reading.toLocaleString()}
@@ -90,7 +112,7 @@ export default function Dashboard({
               <h2 className="mb-3 text-sm font-semibold text-slate-300">Continue reading</h2>
               <div className="grid gap-3 sm:grid-cols-2">
                 {stats.in_progress.map((b) => (
-                  <ReadingRow key={b.id} book={b} onOpen={() => goto("library")} />
+                  <ReadingRow key={b.id} book={b} onOpen={() => open(b)} />
                 ))}
               </div>
             </section>
@@ -114,7 +136,7 @@ export default function Dashboard({
                     <div className="w-40 shrink-0 truncate text-sm font-medium">{c.name}</div>
                     <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-teal-500 to-amber-500"
+                        className="h-full rounded-full bg-gradient-to-r from-accent-500 to-amber-500"
                         style={{ width: `${(c.total / maxCat) * 100}%` }}
                       />
                     </div>
@@ -133,7 +155,7 @@ export default function Dashboard({
               <h2 className="mb-3 text-sm font-semibold text-slate-300">Recently finished</h2>
               <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6">
                 {stats.recent_finished.map((b) => (
-                  <FinishedCard key={b.id} book={b} onOpen={() => goto("library")} />
+                  <FinishedCard key={b.id} book={b} onOpen={() => open(b)} />
                 ))}
               </div>
             </section>
@@ -153,10 +175,10 @@ function StatCard({
   label: string;
   value: string;
   icon: string;
-  tone: "teal" | "green" | "amber" | "blue";
+  tone: "accent" | "green" | "amber" | "blue";
 }) {
   const tones = {
-    teal: "from-teal-500/20 to-teal-500/5 text-teal-300",
+    accent: "from-accent-500/20 to-accent-500/5 text-accent-300",
     green: "from-emerald-500/20 to-emerald-500/5 text-emerald-300",
     amber: "from-amber-500/20 to-amber-500/5 text-amber-300",
     blue: "from-sky-500/20 to-sky-500/5 text-sky-300",
@@ -205,7 +227,7 @@ function ReadingRow({ book, onOpen }: { book: Book; onOpen: () => void }) {
         <div className="truncate text-[11px] text-slate-500">{book.author ?? "Unknown author"}</div>
         <div className="mt-2 flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-teal-500" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded-full bg-accent-500" style={{ width: `${pct}%` }} />
           </div>
           <span className="text-[11px] tabular-nums text-slate-400">{pct}%</span>
         </div>
@@ -240,7 +262,7 @@ function FinishedCard({ book, onOpen }: { book: Book; onOpen: () => void }) {
 function EmptyState({ title, body, action }: { title: string; body: string; action: ReactNode }) {
   return (
     <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.02] px-8 py-14 text-center">
-      <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-teal-500/15 text-teal-300">
+      <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-accent-500/15 text-accent-300">
         <Icon name="book" className="h-7 w-7" />
       </div>
       <h3 className="text-lg font-semibold">{title}</h3>

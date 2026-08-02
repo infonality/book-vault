@@ -1,6 +1,6 @@
 /** Reading preferences: how the page looks, independent of which book. */
 
-export type Theme = "paper" | "sepia" | "night";
+export type Theme = "paper" | "white" | "sepia" | "night";
 /** "publisher" leaves the book's own typeface alone, as Books' Original does. */
 export type FontChoice = "publisher" | "iowan" | "georgia" | "charter" | "system";
 
@@ -66,10 +66,20 @@ export interface ThemeColors {
   link: string;
   /** Colour of the surround outside the page. */
   chrome: string;
+  /**
+   * Whether to override the book's own text colours.
+   *
+   * A tinted or dark page has to, because a publisher stylesheet that sets
+   * near-black text would be unreadable on it. A plain light page does not, and
+   * leaving it alone is what keeps the book looking as it was designed —
+   * coloured headings, drop caps and all.
+   */
+  forceColors: boolean;
 }
 
 export const THEMES: Record<Theme, ThemeColors> = {
-  paper: { bg: "#faf7f1", fg: "#1c1a17", link: "#0f766e", chrome: "#2a2622" },
-  sepia: { bg: "#f4ecd8", fg: "#5b4636", link: "#8a5a2b", chrome: "#2e2820" },
-  night: { bg: "#17171a", fg: "#c9c6c0", link: "#7cc4bd", chrome: "#0d0d0f" },
+  paper: { bg: "#faf7f1", fg: "#1c1a17", link: "#0f766e", chrome: "#2a2622", forceColors: false },
+  white: { bg: "#ffffff", fg: "#14141a", link: "#0f766e", chrome: "#1f1f23", forceColors: false },
+  sepia: { bg: "#f4ecd8", fg: "#5b4636", link: "#8a5a2b", chrome: "#2e2820", forceColors: true },
+  night: { bg: "#17171a", fg: "#c9c6c0", link: "#7cc4bd", chrome: "#0d0d0f", forceColors: true },
 };

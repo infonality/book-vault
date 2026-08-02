@@ -59,16 +59,26 @@ fn open_zip(path: &Path) -> Result<Archive> {
     ZipArchive::new(std::io::BufReader::new(file)).context("read epub archive")
 }
 
-/// Read the spine and table of contents.
-pub fn open(path: &Path) -> Result<ReaderBook> {
-    let mut zip = open_zip(path)?;
-    let opf_path = find_opf_path(&mut zip)?;
-    let opf_xml = read_entry_string(&mut zip, &opf_path)?;
+/// The package document, plus the reading order as archive paths.
+struct Package {
+    opf: crate::formats::epub::Opf,
+    /// Directory the OPF lives in; hrefs inside it resolve against this.
+    dir: String,
+    /// Content documents in reading order.
+    docs: Vec<String>,
+}
+
+/// Read the package and the reading order, without touching the documents
+/// themselves. Opening a chapter needs the order but not the text, and reading
+/// the text means decompressing every document in the book.
+fn package(zip: &mut Archive) -> Result<Package> {
+    let opf_path = find_opf_path(zip)?;
+    let opf_xml = read_entry_string(zip, &opf_path)?;
     let opf = parse_opf(&opf_xml);
     let dir = parent_dir(&opf_path);
 
     // Reading order: spine itemrefs mapped through the manifest to real paths.
-    let mut spine = Vec::new();
+    let mut docs = Vec::new();
     for idref in &opf.spine {
         let Some(item) = opf.manifest.iter().find(|i| &i.id == idref) else {
             continue;
@@ -76,18 +86,29 @@ pub fn open(path: &Path) -> Result<ReaderBook> {
         if !is_document(&item.media_type, &item.href) {
             continue;
         }
-        let entry = resolve(&dir, &item.href);
-        // Counting text now means progress percentages never need a second pass.
-        let chars = read_entry_string(&mut zip, &entry)
-            .map(|html| crate::formats::strip_tags(&html).chars().count())
-            .unwrap_or(0);
-        spine.push(SpineItem { index: spine.len(), path: entry, chars });
+        docs.push(resolve(&dir, &item.href));
     }
-    if spine.is_empty() {
+    if docs.is_empty() {
         return Err(anyhow!("this EPUB has no readable chapters"));
     }
+    Ok(Package { opf, dir, docs })
+}
 
-    let toc = read_toc(&mut zip, &opf, &dir, &spine).unwrap_or_default();
+/// Read the spine and table of contents.
+pub fn open(path: &Path) -> Result<ReaderBook> {
+    let mut zip = open_zip(path)?;
+    let pkg = package(&mut zip)?;
+
+    // Counting text now means progress percentages never need a second pass.
+    let mut spine = Vec::with_capacity(pkg.docs.len());
+    for entry in &pkg.docs {
+        let chars = read_entry_string(&mut zip, entry)
+            .map(|html| crate::formats::strip_tags(&html).chars().count())
+            .unwrap_or(0);
+        spine.push(SpineItem { index: spine.len(), path: entry.clone(), chars });
+    }
+
+    let toc = read_toc(&mut zip, &pkg.opf, &pkg.dir, &spine).unwrap_or_default();
     let total_chars = spine.iter().map(|s| s.chars).sum();
 
     Ok(ReaderBook { spine, toc, total_chars })
@@ -114,20 +135,24 @@ pub struct Chapter {
     pub chars: usize,
 }
 
+/// One chapter. Deliberately goes through `package` rather than `open`: turning
+/// a page into the next chapter shouldn't re-read and re-measure every other
+/// document in the book, which on a long one is seconds of work per chapter.
 pub fn chapter(path: &Path, index: usize) -> Result<Chapter> {
-    let book = open(path)?;
-    let item = book
-        .spine
+    let mut zip = open_zip(path)?;
+    let pkg = package(&mut zip)?;
+    let entry = pkg
+        .docs
         .get(index)
         .ok_or_else(|| anyhow!("chapter {index} is out of range"))?
         .clone();
-    let mut zip = open_zip(path)?;
-    let raw = read_entry_string(&mut zip, &item.path)?;
+    let raw = read_entry_string(&mut zip, &entry)?;
+    let chars = crate::formats::strip_tags(&raw).chars().count();
     Ok(Chapter {
         index,
         html: sanitize(&raw),
-        dir: parent_dir(&item.path),
-        chars: item.chars,
+        dir: parent_dir(&entry),
+        chars,
     })
 }
 
@@ -290,25 +315,62 @@ fn strip_elements(html: &str, tag: &str) -> String {
 
 /// Strip `on*="..."` attributes and `javascript:` URLs.
 fn strip_event_handlers(html: &str) -> String {
+    let chars: Vec<char> = html.chars().collect();
     let mut out = String::with_capacity(html.len());
-    let bytes: Vec<char> = html.chars().collect();
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != '<' {
-            out.push(bytes[i]);
+    while i < chars.len() {
+        if chars[i] != '<' || !opens_tag(chars.get(i + 1)) {
+            // A bare `<` in prose — "5 < 6" — is text, and treating it as a tag
+            // would swallow everything up to the next `>`.
+            out.push(chars[i]);
             i += 1;
             continue;
         }
-        // Copy one tag at a time, filtering its attributes.
-        let mut j = i;
-        while j < bytes.len() && bytes[j] != '>' {
-            j += 1;
-        }
-        let tag: String = bytes[i..(j + 1).min(bytes.len())].iter().collect();
+        let end = tag_end(&chars, i);
+        let tag: String = chars[i..end.min(chars.len())].iter().collect();
         out.push_str(&filter_tag(&tag));
-        i = j + 1;
+        i = end;
     }
     out
+}
+
+/// Whether `<` followed by this character begins a tag rather than prose.
+fn opens_tag(next: Option<&char>) -> bool {
+    matches!(next, Some(c) if c.is_ascii_alphabetic() || *c == '/' || *c == '!' || *c == '?')
+}
+
+/// Index just past the `>` that closes the tag starting at `start`.
+///
+/// Quoting matters here. `<img alt="a > b" src="p.png">` ends at the *second*
+/// `>`; stopping at the first would cut the tag in half and drop `src` with it,
+/// which shows up as an image that silently fails to load.
+fn tag_end(chars: &[char], start: usize) -> usize {
+    // Comments have their own terminator and may contain anything at all.
+    if chars[start..].starts_with(&['<', '!', '-', '-']) {
+        let mut j = start + 4;
+        while j + 2 < chars.len() {
+            if chars[j] == '-' && chars[j + 1] == '-' && chars[j + 2] == '>' {
+                return j + 3;
+            }
+            j += 1;
+        }
+        return chars.len();
+    }
+
+    let mut quote: Option<char> = None;
+    let mut j = start + 1;
+    while j < chars.len() {
+        let c = chars[j];
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == '>' => return j + 1,
+            None => {}
+        }
+        j += 1;
+    }
+    chars.len()
 }
 
 fn filter_tag(tag: &str) -> String {
@@ -392,15 +454,51 @@ fn read_toc(
     Some(parse_ncx(&xml, &base, spine))
 }
 
+/// Percent-decoded and case-folded, so two spellings of one entry compare equal.
+fn norm(path: &str) -> String {
+    urlencoding::decode(path)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| path.to_string())
+        .to_lowercase()
+}
+
+fn leaf(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 /// Map an href from a nav/ncx document onto a spine index plus fragment.
+///
+/// The comparison is deliberately forgiving. Producers disagree about whether
+/// hrefs are percent-encoded, about the case of archive entries, and about
+/// which directory an NCX `src` is relative to; an exact match sends a TOC row
+/// back as unresolved, which the UI can only render as a dead entry.
 fn locate(base: &str, href: &str, spine: &[SpineItem]) -> (Option<usize>, Option<String>) {
     let (file, frag) = match href.split_once('#') {
-        Some((f, g)) => (f, Some(g.to_string())),
+        Some((f, g)) if !g.is_empty() => (f, Some(norm_fragment(g))),
+        Some((f, _)) => (f, None),
         None => (href, None),
     };
-    let target = resolve(base, file);
-    let idx = spine.iter().position(|s| s.path == target);
+    // A bare `#id` points inside the current document, which this function has
+    // no way to identify; leave it unresolved rather than guessing a chapter.
+    if file.is_empty() {
+        return (None, frag);
+    }
+
+    let target = norm(&resolve(base, file));
+    if let Some(i) = spine.iter().position(|s| norm(&s.path) == target) {
+        return (Some(i), frag);
+    }
+    // Last resort: the file name alone. Two spine documents rarely share one.
+    let name = leaf(&target).to_string();
+    let idx = spine.iter().position(|s| leaf(&norm(&s.path)) == name);
     (idx, frag)
+}
+
+/// Fragments are IRIs too, so `#chapter%201` and `#chapter 1` are the same id.
+fn norm_fragment(frag: &str) -> String {
+    urlencoding::decode(frag)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| frag.to_string())
 }
 
 fn parse_nav(xml: &str, base: &str, spine: &[SpineItem]) -> Vec<TocEntry> {
@@ -542,6 +640,56 @@ mod tests {
     fn keeps_ordinary_markup_intact() {
         let html = r#"<div class="chapter"><img src="../img/a.png" alt="one"/><p>Text</p></div>"#;
         assert_eq!(sanitize(html), html);
+    }
+
+    #[test]
+    fn a_bracket_inside_an_attribute_does_not_truncate_the_tag() {
+        let html = r#"<img alt="before &amp; after > detail" src="fig/plate.png"/>"#;
+        let clean = sanitize(html);
+        assert!(clean.contains(r#"src="fig/plate.png""#), "src was lost: {clean}");
+    }
+
+    #[test]
+    fn prose_brackets_and_comments_survive() {
+        let html = "<p>if 5 &lt; 6 and x < y then don't stop</p><!-- a > note --><p>next</p>";
+        let clean = sanitize(html);
+        assert!(clean.contains("don't stop"), "text was swallowed: {clean}");
+        assert!(clean.contains("<p>next</p>"), "markup after a comment was lost: {clean}");
+    }
+
+    fn spine_of(paths: &[&str]) -> Vec<SpineItem> {
+        paths
+            .iter()
+            .enumerate()
+            .map(|(index, p)| SpineItem { index, path: p.to_string(), chars: 100 })
+            .collect()
+    }
+
+    #[test]
+    fn toc_hrefs_resolve_despite_encoding_and_case() {
+        let spine = spine_of(&["OEBPS/Text/chapter 1.xhtml", "OEBPS/Text/ch02.xhtml"]);
+
+        // Exact.
+        assert_eq!(locate("OEBPS", "Text/ch02.xhtml", &spine).0, Some(1));
+        // Percent-encoded href against a plain archive entry.
+        assert_eq!(locate("OEBPS", "Text/chapter%201.xhtml", &spine).0, Some(0));
+        // Case that doesn't match the archive.
+        assert_eq!(locate("OEBPS", "text/CH02.xhtml", &spine).0, Some(1));
+        // An NCX that forgot its subdirectory: fall back to the file name.
+        assert_eq!(locate("", "ch02.xhtml", &spine).0, Some(1));
+    }
+
+    #[test]
+    fn toc_hrefs_carry_their_fragment() {
+        let spine = spine_of(&["OEBPS/all.xhtml"]);
+        let (idx, frag) = locate("OEBPS", "all.xhtml#part_two", &spine);
+        assert_eq!(idx, Some(0));
+        assert_eq!(frag.as_deref(), Some("part_two"));
+
+        // A trailing '#' isn't a fragment.
+        assert_eq!(locate("OEBPS", "all.xhtml#", &spine).1, None);
+        // A document-relative fragment can't name a chapter on its own.
+        assert_eq!(locate("OEBPS", "#somewhere", &spine).0, None);
     }
 
     #[test]

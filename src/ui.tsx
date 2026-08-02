@@ -203,10 +203,13 @@ export function Button({ variant = "subtle", busy, className, children, disabled
   const base =
     "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
   const styles = {
-    primary: "bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-950/40",
+    // `text-on-accent` rather than `text-white`: on a filled button the label
+    // has to stay light in both themes, and in light mode `white` is redefined
+    // to ink so that every hairline and panel tint inverts with it.
+    primary: "bg-accent-600 hover:bg-accent-500 text-on-accent shadow-lg shadow-accent-950/40",
     ghost: "hover:bg-white/5 text-slate-300",
     subtle: "bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10",
-    danger: "bg-rose-600/90 hover:bg-rose-500 text-white",
+    danger: "bg-rose-600/90 hover:bg-rose-500 text-on-accent",
   }[variant];
   return (
     <button className={cx(base, styles, className)} disabled={disabled || busy} {...rest}>
@@ -254,14 +257,14 @@ export function Badge({
   tone = "slate",
 }: {
   children: React.ReactNode;
-  tone?: "slate" | "green" | "amber" | "rose" | "teal" | "blue";
+  tone?: "slate" | "green" | "amber" | "rose" | "accent" | "blue";
 }) {
   const tones = {
     slate: "bg-white/5 text-slate-300 border-white/10",
     green: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
     amber: "bg-amber-500/10 text-amber-300 border-amber-500/20",
     rose: "bg-rose-500/10 text-rose-300 border-rose-500/20",
-    teal: "bg-teal-500/10 text-teal-300 border-teal-500/20",
+    accent: "bg-accent-500/10 text-accent-300 border-accent-500/20",
     blue: "bg-sky-500/10 text-sky-300 border-sky-500/20",
   }[tone];
   return (
@@ -272,10 +275,10 @@ export function Badge({
 }
 
 /** Colour + label for a reading status. */
-export function statusMeta(status: string): { label: string; tone: "slate" | "teal" | "green" } {
+export function statusMeta(status: string): { label: string; tone: "slate" | "accent" | "green" } {
   switch (status) {
     case "reading":
-      return { label: "Reading", tone: "teal" };
+      return { label: "Reading", tone: "accent" };
     case "finished":
       return { label: "Finished", tone: "green" };
     default:

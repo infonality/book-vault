@@ -283,13 +283,35 @@ pub(crate) fn find_opf_path(zip: &mut Archive) -> Result<String> {
 pub(crate) fn read_entry_bytes(zip: &mut Archive, name: &str) -> Result<Vec<u8>> {
     let decoded = urlencoding::decode(name).map(|c| c.into_owned()).unwrap_or_else(|_| name.to_string());
     // Try the exact name, then a URL-decoded variant.
-    for candidate in [name.to_string(), decoded] {
+    for candidate in [name.to_string(), decoded.clone()] {
         if let Ok(mut f) = zip.by_name(&candidate) {
             let mut out = Vec::new();
             f.read_to_end(&mut out)?;
             return Ok(out);
         }
     }
+
+    // Plenty of EPUBs were assembled on a case-insensitive filesystem, so an
+    // href reads `Images/Cover.jpg` while the archive holds `images/cover.jpg`.
+    // The zip index is exact, so scan it before giving up — a missed image is
+    // otherwise invisible, and this only runs on the failure path.
+    let wanted = decoded.to_lowercase();
+    let mut found = None;
+    for i in 0..zip.len() {
+        if let Ok(f) = zip.by_index(i) {
+            if f.name().to_lowercase() == wanted {
+                found = Some(f.name().to_string());
+                break;
+            }
+        }
+    }
+    if let Some(actual) = found {
+        let mut f = zip.by_name(&actual)?;
+        let mut out = Vec::new();
+        f.read_to_end(&mut out)?;
+        return Ok(out);
+    }
+
     Err(anyhow!("entry not found: {name}"))
 }
 

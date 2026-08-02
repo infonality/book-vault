@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import "./index.css";
 import { api, Book, ProgressEvent, Settings } from "./api";
+import { Appearance, applyAppearance, loadAppearance, saveAppearance } from "./appearance";
 import { Button, cx, Icon, Logo, Spinner } from "./ui";
 import { TITLE_BAR_HEIGHT } from "./platform";
 import Dashboard from "./pages/Dashboard";
@@ -23,8 +24,17 @@ export default function App() {
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [scanning, setScanning] = useState(false);
+  // main.tsx has already applied this before the first paint; holding it in
+  // state is what lets the Settings controls re-render against it.
+  const [appearance, setAppearance] = useState<Appearance>(loadAppearance);
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+
+  const changeAppearance = useCallback((next: Appearance) => {
+    setAppearance(next);
+    saveAppearance(next);
+    applyAppearance(next);
+  }, []);
 
   // WebView2's own menu offers reload and inspect, which mean nothing in a
   // desktop app. Text fields keep theirs, since cut/copy/paste is genuinely
@@ -91,15 +101,23 @@ export default function App() {
   return (
     <div className="flex h-full w-full text-slate-200">
       {/* Sidebar */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-white/10 bg-sidebar backdrop-blur">
         <div
           data-tauri-drag-region
           className="flex items-center gap-2.5 px-5 py-5"
           style={{ paddingTop: 20 + TITLE_BAR_HEIGHT }}
         >
           <Logo className="h-9 w-9 shrink-0 rounded-lg shadow-lg shadow-violet-950/40" />
-          <div>
-            <div className="text-sm font-semibold leading-tight">Shelfmark</div>
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm font-semibold leading-tight">Shelfmark</span>
+              <span
+                className="rounded bg-white/10 px-1 py-px text-[10px] font-medium tabular-nums leading-none text-slate-400"
+                title={`Shelfmark ${__APP_VERSION__}`}
+              >
+                {__APP_VERSION__}
+              </span>
+            </div>
             <div className="text-[11px] text-slate-500">Reading tracker</div>
           </div>
         </div>
@@ -112,7 +130,7 @@ export default function App() {
               className={cx(
                 "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                 view === n.id
-                  ? "bg-teal-600/20 text-white ring-1 ring-inset ring-teal-500/30"
+                  ? "bg-accent-600/20 text-white ring-1 ring-inset ring-accent-500/30"
                   : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
               )}
             >
@@ -149,6 +167,8 @@ export default function App() {
               reloadToken={reloadToken}
               goto={setView}
               onScan={doScan}
+              onOpen={openBook}
+              onReload={reload}
               scanning={scanning}
               configured={configured}
             />
@@ -162,6 +182,8 @@ export default function App() {
           {view === "settings" && (
             <Settings_
               settings={settings}
+              appearance={appearance}
+              onAppearance={changeAppearance}
               onSaved={async () => {
                 await loadSettings();
                 reload();
@@ -187,7 +209,7 @@ function ProgressToast({ p }: { p: ProgressEvent }) {
         {p.done ? (
           <Icon name="check" className="h-4 w-4 text-emerald-400" />
         ) : (
-          <Spinner className="h-4 w-4 text-teal-400" />
+          <Spinner className="h-4 w-4 text-accent-400" />
         )}
         <span className="text-sm font-medium capitalize">{p.job}</span>
         {p.total > 0 && (
@@ -198,7 +220,7 @@ function ProgressToast({ p }: { p: ProgressEvent }) {
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
         <div
-          className={cx("h-full rounded-full transition-all", p.done ? "bg-emerald-500" : "bg-teal-500")}
+          className={cx("h-full rounded-full transition-all", p.done ? "bg-emerald-500" : "bg-accent-500")}
           style={{ width: `${pct}%` }}
         />
       </div>

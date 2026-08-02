@@ -10,19 +10,34 @@ import {
 } from "../api";
 import {
   clearMarks,
+  elementForFragment,
   HIGHLIGHT_COLORS,
   markRange,
   offsetsForOccurrence,
   offsetsForSelection,
+  pageForElement,
   pageForRange,
   rangeForOffsets,
 } from "../reader-dom";
+import {
+  applyLayoutStyle,
+  buildDocument,
+  clearOffset,
+  countPages,
+  Geometry,
+  geometryFor,
+  internalTarget,
+  Landing,
+  reveal,
+  SEEK_COLOR,
+  settle,
+  showPage,
+} from "../reader-layout";
 import { cx, Icon, Spinner } from "../ui";
 import { IS_MAC, TRAFFIC_LIGHT_INSET } from "../platform";
 import {
   DEFAULT_PREFS,
   FONT_LABELS,
-  FONT_STACKS,
   FontChoice,
   loadPrefs,
   ReaderPrefs,
@@ -42,12 +57,24 @@ import {
  * the file came from. `allow-same-origin` is what lets this component reach in
  * to lay out columns and measure pages; granting script permission alongside it
  * would undo the protection entirely, so don't.
+ *
+ * Laying out and measuring lives in `reader-layout`; this file is the state
+ * around it. Two rules keep that state honest:
+ *
+ *  - `layout()` never changes identity. It reads everything through refs, so
+ *    nothing that merely turns a page can invalidate an effect and set off
+ *    another relayout — which is what made page turns feel expensive.
+ *  - Where to land is a `Landing` tagged with the spine index it belongs to,
+ *    held in a ref until the chapter it names has actually settled. A relayout
+ *    for anything else can't consume it, and a jump can't be lost to one.
  */
 
-/** Width past which a second column reads better than one long line. */
-const IDEAL_COLUMN = 720;
-/** A wheel notch shouldn't fire more than one page turn. */
-const WHEEL_COOLDOWN = 320;
+/** Wheel delta that adds up to one page turn. */
+const WHEEL_THRESHOLD = 45;
+/** Fastest a continuous wheel gesture may turn pages. */
+const WHEEL_COOLDOWN = 110;
+/** A wheel gesture that pauses this long starts accumulating afresh. */
+const WHEEL_GESTURE_GAP = 400;
 
 type Menu = {
   x: number;
@@ -82,24 +109,43 @@ export default function Reader({
   const [searching, setSearching] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   // The search result to keep flagged. It persists across relayouts — marks are
-  // cleared and redrawn every paginate, so consuming it on the first pass would
+  // cleared and redrawn every layout, so consuming it on the first pass would
   // make the flag vanish as soon as fonts settled and triggered a second one.
   const flash = useRef<{ text: string; occurrence: number } | null>(null);
-  // Set once per jump, to move the page to wherever the match landed.
-  const jumpToFlash = useRef(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
+  const [cols, setCols] = useState<1 | 2>(1);
 
   const frameRef = useRef<HTMLIFrameElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
-  // Where to land once the next chapter lays out: a ratio through the chapter,
-  // or "end" when paging backwards into it.
-  const pending = useRef<number | "end" | null>(null);
-  const lastWheel = useRef(0);
-  // paginate() reads these; depending on them directly would relayout on every
-  // annotation change even when nothing visual moved.
-  const annotationsRef = useRef<Annotation[]>([]);
+  /**
+   * Where the next layout should land, and which chapter that instruction is
+   * about. The spine tag is what stops a relayout triggered by something else —
+   * a panel opening, an annotation being drawn — from consuming a jump that was
+   * meant for a chapter still in flight.
+   */
+  const landingRef = useRef<{ spine: number; to: Landing } | null>(null);
+  /**
+   * Geometry the current layout was measured against. Turning a page scrolls by
+   * exactly this width rather than re-measuring the frame, so a page turn can
+   * never disagree with the layout it is scrolling through.
+   */
+  const geomRef = useRef<Geometry | null>(null);
+
+  // Mirrors, so `layout` and the listeners bound inside the frame can read the
+  // current values without being rebuilt whenever one of them changes.
+  const pageRef = useRef(0);
+  const pagesRef = useRef(1);
   const chapterRef = useRef<number | null>(null);
+  const sessionRef = useRef<ReaderSession | null>(null);
+  const annotationsRef = useRef<Annotation[]>([]);
+  const prefsRef = useRef(prefs);
+  pageRef.current = page;
+  pagesRef.current = pages;
+  chapterRef.current = chapter?.index ?? null;
+  sessionRef.current = session;
+  annotationsRef.current = annotations;
+  prefsRef.current = prefs;
 
   // ---- load ----
   useEffect(() => {
@@ -110,15 +156,17 @@ export default function Reader({
         if (!alive) return;
         setSession(s);
         let start = 0;
+        let to: Landing = { kind: "page", page: 0 };
         if (s.locator) {
           try {
             const loc = JSON.parse(s.locator) as Locator;
             start = Math.min(Math.max(0, loc.spine), s.spine.length - 1);
-            pending.current = loc.ratio;
+            to = { kind: "ratio", ratio: loc.ratio };
           } catch {
             /* a corrupt locator just means starting from the beginning */
           }
         }
+        landingRef.current = { spine: start, to };
         return api.readerChapter(book.id, start).then((c) => alive && setChapter(c));
       })
       .catch((e) => alive && setError(String(e)));
@@ -143,13 +191,6 @@ export default function Reader({
     return out;
   }, [session]);
 
-  useEffect(() => {
-    annotationsRef.current = annotations;
-  }, [annotations]);
-  useEffect(() => {
-    chapterRef.current = chapter?.index ?? null;
-  }, [chapter]);
-
   const percentAt = useCallback(
     (spine: number, ratio: number) => {
       if (!session || session.total_chars === 0) return 0;
@@ -161,132 +202,105 @@ export default function Reader({
   );
 
   // ---- lay out into columns ----
-  const paginate = useCallback(() => {
+  /**
+   * Impose the layout, measure it, and put the reader where they should be.
+   *
+   * `final` says the document has stopped moving — fonts and images are in —
+   * and is the only thing that clears a pending landing. Until then a landing
+   * is re-applied on every pass, so an image that arrives late and changes the
+   * page count can't strand a jump halfway down the chapter.
+   *
+   * Identity is deliberately stable: nothing in the dependency array. Everything
+   * it reads comes from a ref.
+   */
+  const layout = useCallback((final = false) => {
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
-    const host = hostRef.current;
-    if (!frame || !doc?.body || !host) return;
+    if (!frame || !doc?.body) return;
 
-    const w = host.clientWidth;
-    const h = host.clientHeight;
-    if (w === 0 || h === 0) return;
+    const box = frame.getBoundingClientRect();
+    if (box.width < 2 || box.height < 2) return;
 
-    const cols = Math.max(1, Math.min(2, Math.floor(w / IDEAL_COLUMN)));
-    const pad = prefs.margin;
-    const t = THEMES[prefs.theme];
-
-    // Sepia and night have to force colours, because a publisher stylesheet
-    // that sets dark text would be unreadable on a dark page. Paper leaves
-    // their colours alone so the book looks as designed.
-    const recolour =
-      prefs.theme === "paper"
-        ? ""
-        : `body, body * { color:${t.fg} !important; background-color:transparent !important;
-             border-color:rgba(128,128,128,.35) !important; }
-           a, a * { color:${t.link} !important; }
-           img, svg, video { filter:${prefs.theme === "night" ? "brightness(.82)" : "none"}; }`;
-
-    // Only override the typeface when the reader has actually chosen one;
-    // "publisher" leaves the book's own @font-face and families in charge.
-    const family =
-      prefs.font === "publisher"
-        ? ""
-        : `body, body * { font-family:${FONT_STACKS[prefs.font]} !important; }`;
-
-    const style = doc.getElementById("bv-layout") ?? doc.createElement("style");
-    style.id = "bv-layout";
-    style.textContent = `
-      html { margin:0; padding:0; height:${h}px; overflow:hidden; background:${t.bg}; }
-      body {
-        margin:0;
-        padding:${pad}px ${pad}px ${pad * 0.75}px;
-        height:${h}px;
-        box-sizing:border-box;
-        column-count:${cols};
-        column-gap:${pad * 1.8}px;
-        column-fill:auto;
-        -webkit-column-count:${cols};
-        -webkit-column-gap:${pad * 1.8}px;
-        text-align:${prefs.justify ? "justify" : "left"};
-        hyphens:${prefs.justify ? "auto" : "manual"};
-        -webkit-hyphens:${prefs.justify ? "auto" : "manual"};
-        background:${t.bg};
-        font-size:${prefs.size}px;
-        line-height:${prefs.lineHeight};
-      }
-      ${family}
-      ${recolour}
-      img, svg, video, table { max-width:100%; max-height:${h - pad * 2}px; height:auto; }
-      h1, h2, h3, h4 { break-after:avoid; text-align:left; hyphens:none; }
-      a { text-decoration:none; border-bottom:1px solid currentColor; }
-      ::selection { background:rgba(120,110,255,.28); }
-    `;
-    if (!style.parentNode) doc.head.appendChild(style);
-
-    const total = Math.max(1, Math.round(doc.body.scrollWidth / w));
-    setPages(total);
+    const geom = geometryFor(box.width, box.height, prefsRef.current);
+    geomRef.current = geom;
+    applyLayoutStyle(doc, geom, prefsRef.current);
+    // Measure with the content at rest, so every rect below is a document
+    // position and the landing resolvers need no offset arithmetic.
+    clearOffset(doc);
 
     // Highlights are redrawn from scratch each layout: marks split text nodes,
     // so leaving old ones in place would corrupt subsequent offsets.
     clearMarks(doc, "data-bv-hl");
     clearMarks(doc, "data-bv-seek");
-    if (chapterRef.current !== null) {
+    const spine = chapterRef.current;
+    if (spine !== null) {
       for (const a of annotationsRef.current) {
-        if (a.spine !== chapterRef.current || a.kind !== "highlight") continue;
+        if (a.spine !== spine || a.kind !== "highlight") continue;
         const r = rangeForOffsets(doc, a.start_off, a.end_off);
-        if (r) markRange(doc, r, "data-bv-hl", String(a.id), HIGHLIGHT_COLORS[a.color] ?? HIGHLIGHT_COLORS.yellow);
+        if (r) {
+          markRange(doc, r, "data-bv-hl", String(a.id), HIGHLIGHT_COLORS[a.color] ?? HIGHLIGHT_COLORS.yellow);
+        }
       }
     }
-
-    let target = page;
-
-    // Redraw the search flag every layout, and on a fresh jump move to it.
     if (flash.current) {
       const found = offsetsForOccurrence(doc, flash.current.text, flash.current.occurrence);
       const r = found && rangeForOffsets(doc, found.start, found.end);
-      if (r) {
-        markRange(doc, r, "data-bv-seek", "1", "rgba(255,193,7,.5)");
-        if (jumpToFlash.current) {
-          jumpToFlash.current = false;
-          pending.current = null;
-          const total0 = Math.max(1, Math.round(doc.body.scrollWidth / w));
-          setPages(total0);
-          const p = Math.min(pageForRange(doc, r, w), total0 - 1);
-          setPage(p);
-          doc.documentElement.scrollLeft = p * w;
-          return;
-        }
-      } else if (jumpToFlash.current) {
-        // The phrase didn't survive markup stripping identically; fall back to
-        // the chapter start rather than jumping somewhere arbitrary.
-        jumpToFlash.current = false;
-        flash.current = null;
-      }
+      if (r) markRange(doc, r, "data-bv-seek", "1", SEEK_COLOR);
     }
 
-    if (pending.current !== null) {
-      target = pending.current === "end" ? total - 1 : Math.round(pending.current * total);
-      pending.current = null;
+    const total = countPages(doc.body.scrollWidth, geom.w);
+
+    const land = landingRef.current;
+    let target: number;
+    if (land && land.spine === spine) {
+      target = resolveLanding(doc, land.to, geom.w, total);
+      if (final) landingRef.current = null;
+    } else {
+      // Nothing pending: hold the reader's place across the reflow. When the
+      // page count is unchanged this is exact.
+      target = pagesRef.current > 1 ? Math.round((pageRef.current / pagesRef.current) * total) : 0;
     }
     target = Math.min(Math.max(0, target), total - 1);
+
+    // The refs lead the state: a second turn can arrive before React has
+    // re-rendered, and it has to see the page it is turning from.
+    pageRef.current = target;
+    pagesRef.current = total;
     setPage(target);
-    doc.documentElement.scrollLeft = target * w;
-  }, [page, prefs]);
+    setPages(total);
+    setCols(geom.cols);
+    showPage(doc, target, geom.w);
+    reveal(doc);
+  }, []);
 
   // ---- wire the frame per chapter ----
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame || !chapter || !session) return;
+    let live = true;
 
     const onLoad = () => {
       const doc = frame.contentDocument;
-      if (!doc) return;
+      if (!doc || !live) return;
 
-      // Links jump within the book rather than navigating the frame away.
+      // Links move within the book rather than navigating the frame away — a
+      // navigation would replace the document we hold the layout on.
       doc.addEventListener("click", (e) => {
-        const a = (e.target as HTMLElement)?.closest?.("a");
-        if (a) e.preventDefault();
         setMenu(null);
+        const a = (e.target as HTMLElement)?.closest?.("a");
+        if (!a) return;
+        e.preventDefault();
+        const raw = a.getAttribute("href") ?? "";
+        const target = internalTarget(session, chapter, raw, (a as HTMLAnchorElement).href);
+        // Anything pointing outside the archive is left alone: following it
+        // would mean fetching from the network inside a frame showing
+        // untrusted markup.
+        if (target) {
+          goToRef.current(
+            target.spine,
+            target.fragment ? { kind: "fragment", id: target.fragment } : { kind: "page", page: 0 }
+          );
+        }
       });
 
       // Our own menu, not WebView2's reload/inspect one.
@@ -306,18 +320,7 @@ export default function Reader({
       // has focus the parent window stops seeing those events. They go through
       // refs because this handler runs once per chapter, while `turn` changes
       // on every page.
-      doc.addEventListener(
-        "wheel",
-        (e) => {
-          const we = e as WheelEvent;
-          if (Math.abs(we.deltaY) < 4) return;
-          const now = Date.now();
-          if (now - lastWheel.current < WHEEL_COOLDOWN) return;
-          lastWheel.current = now;
-          turnRef.current(we.deltaY > 0 ? 1 : -1);
-        },
-        { passive: true }
-      );
+      doc.addEventListener("wheel", (e) => wheelRef.current(e as WheelEvent), { passive: true });
       doc.addEventListener("keydown", (e) => {
         const ke = e as KeyboardEvent;
         if (ke.key === "Escape") return escapeRef.current();
@@ -331,101 +334,155 @@ export default function Reader({
         }
       });
 
-      // Fonts change metrics, so re-measure once they've settled.
-      (doc as Document & { fonts?: FontFaceSet }).fonts?.ready.then(paginate).catch(() => {});
-      paginate();
+      // First pass positions the chapter; the second corrects it once the
+      // things that change its measurements have arrived.
+      layout();
+      settle(doc).then(() => {
+        // A load already in flight when the chapter changed still fires, and
+        // its settle would otherwise mark the *next* chapter's landing as
+        // final before that chapter had finished measuring.
+        if (!live || frame.contentDocument !== doc) return;
+        layout(true);
+        // A frame that never got a usable size — a panel mid-animation, say —
+        // must not be left sitting behind the veil.
+        reveal(doc);
+      });
     };
 
     frame.addEventListener("load", onLoad);
     frame.srcdoc = buildDocument(chapter, session.resource_base);
-    return () => frame.removeEventListener("load", onLoad);
-    // `paginate` is excluded on purpose: it changes with `page`, and re-running
-    // this would reload the chapter on every page turn.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapter, session]);
+    return () => {
+      live = false;
+      frame.removeEventListener("load", onLoad);
+    };
+  }, [chapter, session, layout]);
 
   // Redraw marks when an annotation is added or removed.
   useEffect(() => {
-    if (chapter) paginate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations]);
+    if (chapterRef.current !== null) layout();
+  }, [annotations, layout]);
 
-  // Changing type or spacing reflows the text, so hold position by ratio.
+  // Changing type or spacing reflows the text; `layout` holds the place by
+  // ratio on its own when there is nothing pending.
   useEffect(() => {
     savePrefs(prefs);
-    pending.current = pages > 1 ? page / pages : 0;
-    paginate();
-    // Only prefs should trigger this; page/pages are read, not depended on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs]);
+    layout();
+  }, [prefs, layout]);
 
+  // Only a real size change is worth a relayout. `observe` delivers one
+  // callback on registration with the size the element already had, and this
+  // effect is torn down and re-registered whenever the reader re-renders, so
+  // without the comparison a page turn would trigger a full relayout.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    let last = `${host.clientWidth}x${host.clientHeight}`;
     const ro = new ResizeObserver(() => {
-      pending.current = pages > 1 ? page / pages : 0;
-      paginate();
+      const now = `${host.clientWidth}x${host.clientHeight}`;
+      if (now === last) return;
+      last = now;
+      layout();
     });
     ro.observe(host);
     return () => ro.disconnect();
-  }, [paginate, page, pages]);
+  }, [layout]);
 
   // ---- navigation ----
   const goToChapter = useCallback(
-    async (index: number, land: number | "end" = 0) => {
-      if (!session || index < 0 || index >= session.spine.length) return;
-      pending.current = land;
+    async (index: number, to: Landing = { kind: "page", page: 0 }) => {
+      const s = sessionRef.current;
+      if (!s || index < 0 || index >= s.spine.length) return;
+      landingRef.current = { spine: index, to };
       setPanel(null);
+      // A contents entry pointing into the chapter already open only needs the
+      // landing applied. Refetching would reload the frame and lose the
+      // rendered position for no gain. It waits a frame because closing the
+      // panel widens the page, and resolving a fragment against the old width
+      // would put the reader a page out.
+      if (chapterRef.current === index) {
+        requestAnimationFrame(() => layout(true));
+        return;
+      }
       try {
         setChapter(await api.readerChapter(book.id, index));
       } catch (e) {
         setError(String(e));
       }
     },
-    [book.id, session]
+    [book.id, layout]
   );
 
   const turn = useCallback(
     (dir: 1 | -1) => {
       const frame = frameRef.current;
-      const host = hostRef.current;
-      if (!frame?.contentDocument || !host || !chapter) return;
+      const doc = frame?.contentDocument;
+      const spine = chapterRef.current;
+      if (!frame || !doc || spine === null) return;
       setMenu(null);
       flash.current = null;
-      const next = page + dir;
-      if (next < 0) return void goToChapter(chapter.index - 1, "end");
-      if (next >= pages) return void goToChapter(chapter.index + 1, 0);
+      // A turn is the reader overriding whatever we were about to land on.
+      landingRef.current = null;
+
+      const next = pageRef.current + dir;
+      if (next < 0) return void goToChapter(spine - 1, { kind: "end" });
+      if (next >= pagesRef.current) return void goToChapter(spine + 1, { kind: "page", page: 0 });
+
+      pageRef.current = next;
       setPage(next);
-      frame.contentDocument.documentElement.scrollLeft = next * host.clientWidth;
+      showPage(doc, next, geomRef.current?.w ?? frame.getBoundingClientRect().width);
     },
-    [page, pages, chapter, goToChapter]
+    [goToChapter]
   );
 
   // Latest handlers, reachable from listeners bound once per chapter inside
   // the frame's document.
   const turnRef = useRef(turn);
+  const goToRef = useRef(goToChapter);
   const escapeRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    turnRef.current = turn;
-  }, [turn]);
-  useEffect(() => {
-    escapeRef.current = () => (menu ? setMenu(null) : onClose?.());
-  }, [menu, onClose]);
+  turnRef.current = turn;
+  goToRef.current = goToChapter;
+  escapeRef.current = () => (menu ? setMenu(null) : onClose?.());
+
+  /**
+   * One page per wheel gesture's worth of movement.
+   *
+   * A fixed cooldown per event, which is what this used to do, throws away most
+   * of a trackpad's small deltas and makes scrolling feel like it is ignoring
+   * you. Accumulating instead means a mouse notch still turns exactly one page
+   * while a trackpad responds as soon as the reader has actually pushed a
+   * page's worth.
+   */
+  const wheelAccum = useRef(0);
+  const wheelAt = useRef(0);
+  const lastTurn = useRef(0);
+  const onWheel = useCallback(
+    (e: WheelEvent) => {
+      const dy = e.deltaY;
+      if (Math.abs(dy) < 1) return;
+      const now = Date.now();
+      if (now - wheelAt.current > WHEEL_GESTURE_GAP) wheelAccum.current = 0;
+      if (Math.sign(dy) !== Math.sign(wheelAccum.current)) wheelAccum.current = 0;
+      wheelAt.current = now;
+      wheelAccum.current += dy;
+      if (Math.abs(wheelAccum.current) < WHEEL_THRESHOLD) return;
+      if (now - lastTurn.current < WHEEL_COOLDOWN) return;
+      lastTurn.current = now;
+      wheelAccum.current = 0;
+      turnRef.current(dy > 0 ? 1 : -1);
+    },
+    []
+  );
+  const wheelRef = useRef(onWheel);
+  wheelRef.current = onWheel;
 
   // Wheel over the chrome (outside the frame) turns pages too.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) < 4) return;
-      const now = Date.now();
-      if (now - lastWheel.current < WHEEL_COOLDOWN) return;
-      lastWheel.current = now;
-      turn(e.deltaY > 0 ? 1 : -1);
-    };
-    host.addEventListener("wheel", onWheel, { passive: true });
-    return () => host.removeEventListener("wheel", onWheel);
-  }, [turn]);
+    const handler = (e: WheelEvent) => wheelRef.current(e);
+    host.addEventListener("wheel", handler, { passive: true });
+    return () => host.removeEventListener("wheel", handler);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -476,14 +533,9 @@ export default function Reader({
   const gotoHit = useCallback(
     (hit: SearchHit) => {
       flash.current = { text: query.trim(), occurrence: hit.occurrence };
-      jumpToFlash.current = true;
-      if (chapter?.index === hit.spine) {
-        paginate();
-      } else {
-        goToChapter(hit.spine);
-      }
+      goToChapter(hit.spine, { kind: "flash" });
     },
-    [query, chapter, paginate, goToChapter]
+    [query, goToChapter]
   );
 
   const addAnnotation = useCallback(
@@ -531,12 +583,23 @@ export default function Reader({
     [reloadAnnotations]
   );
 
+  // Which contents entry the reader is inside. Several entries can share a
+  // spine index when a book hangs its chapters off fragments, so the last one
+  // at or before the current position is the one to flag — otherwise every
+  // entry in the document would light up at once.
+  const currentTocIndex = useMemo(() => {
+    if (!session || !chapter) return -1;
+    let best = -1;
+    session.toc.forEach((t, i) => {
+      if (t.spine_index !== null && t.spine_index <= chapter.index) best = i;
+    });
+    return best;
+  }, [session, chapter]);
+
   const chapterLabel = useMemo(
     () => (chapter ? labelForSpine(session, chapter.index) : ""),
     [session, chapter]
   );
-
-  const cols = (hostRef.current?.clientWidth ?? 0) >= IDEAL_COLUMN * 2 ? 2 : 1;
 
   return (
     <div
@@ -597,7 +660,7 @@ export default function Reader({
         >
           <Icon name="bookmark" className="h-4 w-4" />
           {annotations.length > 0 && (
-            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-teal-400" />
+            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent-400" />
           )}
         </button>
         <button
@@ -635,11 +698,20 @@ export default function Reader({
                 <button
                   key={i}
                   disabled={t.spine_index === null}
-                  onClick={() => t.spine_index !== null && goToChapter(t.spine_index)}
+                  onClick={() =>
+                    t.spine_index !== null &&
+                    goToChapter(
+                      t.spine_index,
+                      // Anthologies and single-file books hang their whole
+                      // contents off fragments of one document, so an entry
+                      // that names one has to be followed to it.
+                      t.fragment ? { kind: "fragment", id: t.fragment } : { kind: "page", page: 0 }
+                    )
+                  }
                   style={{ paddingLeft: 14 + t.depth * 14 }}
                   className={cx(
                     "block w-full truncate py-1.5 pr-3 text-left text-[13px] transition-colors",
-                    t.spine_index === chapter?.index
+                    i === currentTocIndex
                       ? "bg-white/15 text-white"
                       : "text-white/45 hover:bg-white/5 hover:text-white/80",
                     t.spine_index === null && "opacity-40"
@@ -664,7 +736,7 @@ export default function Reader({
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && runSearch()}
                 placeholder="Search this book…"
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-accent-500/50"
               />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -726,18 +798,11 @@ export default function Reader({
                     <button
                       onClick={() => {
                         flash.current = null;
-                        goToChapter(a.spine, 0);
-                        setTimeout(() => {
-                          const doc = frameRef.current?.contentDocument;
-                          const host = hostRef.current;
-                          if (!doc || !host) return;
-                          const r = rangeForOffsets(doc, a.start_off, a.end_off);
-                          if (r) {
-                            const p = pageForRange(doc, r, host.clientWidth);
-                            setPage(p);
-                            doc.documentElement.scrollLeft = p * host.clientWidth;
-                          }
-                        }, 350);
+                        goToChapter(a.spine, {
+                          kind: "offsets",
+                          start: a.start_off,
+                          end: a.end_off,
+                        });
                       }}
                       className="min-w-0 flex-1 text-left"
                     >
@@ -844,6 +909,38 @@ export default function Reader({
   );
 }
 
+/**
+ * Turn a landing instruction into a page number in the laid-out document.
+ *
+ * Everything is resolved against the layout as it stands right now, which is
+ * why this runs after the marks are drawn rather than before: a search result
+ * is found by looking for the mark that was just made for it.
+ */
+function resolveLanding(doc: Document, to: Landing, w: number, total: number): number {
+  switch (to.kind) {
+    case "page":
+      return to.page;
+    case "ratio":
+      return Math.round(to.ratio * total);
+    case "end":
+      return total - 1;
+    case "fragment": {
+      const el = elementForFragment(doc, to.id);
+      // A fragment that names nothing in the document is not worth guessing at;
+      // the chapter start is at least somewhere the reader asked to be.
+      return el ? pageForElement(doc, el, w) : 0;
+    }
+    case "offsets": {
+      const r = rangeForOffsets(doc, to.start, to.end);
+      return r ? pageForRange(r, w) : 0;
+    }
+    case "flash": {
+      const el = doc.querySelector("[data-bv-seek]");
+      return el ? pageForElement(doc, el, w) : 0;
+    }
+  }
+}
+
 /** Nearest table-of-contents label at or before a spine index. */
 function labelForSpine(session: ReaderSession | null, spine: number): string {
   if (!session) return `Section ${spine + 1}`;
@@ -868,6 +965,7 @@ function PrefsPanel({
 
   const themes: { id: Theme; label: string }[] = [
     { id: "paper", label: "Paper" },
+    { id: "white", label: "White" },
     { id: "sepia", label: "Sepia" },
     { id: "night", label: "Night" },
   ];
@@ -890,14 +988,14 @@ function PrefsPanel({
       </div>
 
       {/* Theme */}
-      <div className="mb-3 grid grid-cols-3 gap-1.5">
+      <div className="mb-3 grid grid-cols-4 gap-1.5">
         {themes.map((t) => (
           <button
             key={t.id}
             onClick={() => set("theme", t.id)}
             className={cx(
               "rounded-lg border py-2 text-[11px] font-medium transition-colors",
-              prefs.theme === t.id ? "border-teal-500/70" : "border-white/10 hover:border-white/25"
+              prefs.theme === t.id ? "border-accent-500/70" : "border-white/10 hover:border-white/25"
             )}
             style={{ background: THEMES[t.id].bg, color: THEMES[t.id].fg }}
           >
@@ -911,7 +1009,7 @@ function PrefsPanel({
       <select
         value={prefs.font}
         onChange={(e) => set("font", e.target.value as FontChoice)}
-        className="mb-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-sm outline-none focus:border-teal-500/50"
+        className="mb-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-sm outline-none focus:border-accent-500/50"
       >
         {(Object.keys(FONT_LABELS) as FontChoice[]).map((f) => (
           <option key={f} value={f}>
@@ -949,7 +1047,7 @@ function PrefsPanel({
           type="checkbox"
           checked={prefs.justify}
           onChange={(e) => set("justify", e.target.checked)}
-          className="accent-teal-500"
+          className="accent-accent-500"
         />
         Justify text
       </label>
@@ -1085,32 +1183,3 @@ function ContextMenu({
   );
 }
 
-/**
- * Wrap chapter markup for the frame. A `<base>` pointed at the chapter's folder
- * inside the archive makes every relative URL the publisher wrote — images,
- * stylesheets, `@font-face` sources — resolve through the resource protocol
- * untouched, which is what keeps the original typography intact.
- */
-function buildDocument(chapter: Chapter, resourceBase: string): string {
-  const base = `${resourceBase}${chapter.dir ? `${chapter.dir}/` : ""}`;
-  const doc = new DOMParser().parseFromString(chapter.html, "text/html");
-
-  const baseEl = doc.createElement("base");
-  baseEl.setAttribute("href", base);
-  doc.head.insertBefore(baseEl, doc.head.firstChild);
-
-  // Defaults the publisher's own stylesheet can still override, since these
-  // come first in the cascade.
-  const defaults = doc.createElement("style");
-  defaults.textContent = `
-    body { font-family:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
-           -webkit-font-smoothing:antialiased; }
-    p { margin:0 0 0.2em; text-indent:1.3em; }
-    p:first-of-type, h1 + p, h2 + p, h3 + p, blockquote p { text-indent:0; }
-    h1,h2,h3 { font-weight:600; letter-spacing:-0.01em; }
-    blockquote { margin:1em 1.5em; font-style:italic; }
-  `;
-  doc.head.insertBefore(defaults, baseEl.nextSibling);
-
-  return `<!doctype html>${doc.documentElement.outerHTML}`;
-}

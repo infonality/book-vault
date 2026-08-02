@@ -107,12 +107,68 @@ export function offsetsForOccurrence(
   return null;
 }
 
+/**
+ * Which page a box falls on, given the width of one page.
+ *
+ * Callers must have put the document back at offset zero first (see
+ * `clearOffset` in reader-layout), so a client rect is already a document-space
+ * position and no scroll or translation has to be added back.
+ *
+ * The tolerance matters: a column boundary computed in fractional pixels can
+ * report an x of `2 * pageWidth - 0.4` for something that is really the first
+ * word of page two, and a bare floor would send the reader back a page.
+ */
+function pageAt(rect: DOMRect, pageWidth: number): number {
+  if (pageWidth < 1) return 0;
+  return Math.max(0, Math.floor((rect.left + 1) / pageWidth));
+}
+
 /** Which page a range falls on, given the width of one page. */
-export function pageForRange(doc: Document, range: Range, pageWidth: number): number {
+export function pageForRange(range: Range, pageWidth: number): number {
   const rect = range.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return 0;
-  const x = rect.left + doc.documentElement.scrollLeft;
-  return Math.max(0, Math.floor(x / pageWidth));
+  return pageAt(rect, pageWidth);
+}
+
+/**
+ * Which page an element falls on. Targets of a table-of-contents fragment are
+ * often empty anchors — `<a id="ch3"/>` — which have no box of their own, so
+ * fall back to a range around the element and then to whatever renders next.
+ */
+export function pageForElement(doc: Document, el: Element, pageWidth: number): number {
+  const usable = (r: DOMRect) => r.width > 0 || r.height > 0;
+
+  let rect = el.getBoundingClientRect();
+  if (!usable(rect)) {
+    try {
+      const range = doc.createRange();
+      range.selectNode(el);
+      rect = range.getBoundingClientRect();
+    } catch {
+      /* selectNode throws on a node with no parent */
+    }
+  }
+  if (!usable(rect)) {
+    const near = el.nextElementSibling ?? el.parentElement;
+    if (near) rect = near.getBoundingClientRect();
+  }
+  return usable(rect) ? pageAt(rect, pageWidth) : 0;
+}
+
+/**
+ * The element a `#fragment` points at. `getElementById` covers ids whatever
+ * characters they contain; the `name` fallback is for EPUB 2 files that still
+ * anchor with `<a name="...">`.
+ */
+export function elementForFragment(doc: Document, id: string): Element | null {
+  const byId = doc.getElementById(id);
+  if (byId) return byId;
+  try {
+    const escape = (window as unknown as { CSS?: { escape(s: string): string } }).CSS?.escape;
+    return doc.querySelector(`[name="${escape ? escape(id) : id}"]`);
+  } catch {
+    return null;
+  }
 }
 
 export const HIGHLIGHT_COLORS: Record<string, string> = {

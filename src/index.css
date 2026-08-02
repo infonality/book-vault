@@ -1,7 +1,148 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Accent
+   ---------------------------------------------------------------------------
+   Declaring these in @theme is what makes `bg-accent-600`, `text-accent-300`
+   and friends exist as utilities. Each compiles to `var(--color-accent-N)`, so
+   swapping the accent is a matter of redefining the variables below — no class
+   in the app has to know which colour is in force.
+
+   `--color-on-accent` is the exception that stays put: text sitting on a filled
+   accent button needs to be light whatever the accent and whatever the theme.
+--------------------------------------------------------------------------- */
+@theme {
+  --color-accent-300: #5eead4;
+  --color-accent-400: #2dd4bf;
+  --color-accent-500: #14b8a6;
+  --color-accent-600: #0d9488;
+  --color-accent-950: #042f2e;
+  /* Label on a filled accent button. Light in both themes. */
+  --color-on-accent: #ffffff;
+  /* Content over a scrim on cover art — deliberately dark whatever the theme,
+     so anything drawn on it stays light. */
+  --color-on-scrim: #ffffff;
+  /* The sidebar, which needs to separate from the canvas in both directions:
+     darker than a dark canvas, lighter than a light one. */
+  --color-sidebar: rgb(0 0 0 / 0.22);
+}
+
+/* Each accent carries two "soft" shades rather than one, because a tint that
+   reads clearly against a dark panel is far too pale on a white one. The theme
+   picks between them below. */
+:root {
+  --accent-soft: #5eead4;
+  --accent-deep: #0f766e;
+}
+:root[data-accent="violet"] {
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+  --color-accent-950: #2e1065;
+  --accent-soft: #c4b5fd;
+  --accent-deep: #6d28d9;
+}
+:root[data-accent="sky"] {
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+  --color-accent-950: #082f49;
+  --accent-soft: #7dd3fc;
+  --accent-deep: #0369a1;
+}
+:root[data-accent="emerald"] {
+  --color-accent-500: #10b981;
+  --color-accent-600: #059669;
+  --color-accent-950: #022c22;
+  --accent-soft: #6ee7b7;
+  --accent-deep: #047857;
+}
+:root[data-accent="amber"] {
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+  --color-accent-950: #451a03;
+  --accent-soft: #fcd34d;
+  --accent-deep: #b45309;
+}
+:root[data-accent="rose"] {
+  --color-accent-500: #f43f5e;
+  --color-accent-600: #e11d48;
+  --color-accent-950: #4c0519;
+  --accent-soft: #fda4af;
+  --accent-deep: #be123c;
+}
+
+/* The reader window sets no theme, so the @theme defaults stand and its chrome
+   stays dark. Only the app windows resolve the soft shades per theme. */
+:root[data-theme="dark"] {
+  --color-accent-300: var(--accent-soft);
+  --color-accent-400: var(--accent-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Light theme
+   ---------------------------------------------------------------------------
+   The UI is written in terms of a dark surface: slate text on near-black, with
+   translucent white for every hairline and raised panel. Rather than restate
+   several hundred classes with a `light:` variant, light mode redefines the
+   handful of palette variables those classes already resolve through.
+
+   Two of them do most of the work:
+
+     --color-white  becomes ink. Every `border-white/10` and `bg-white/5` is a
+                    "slightly lighter than the surface" hairline or panel, and
+                    on a light surface the equivalent is a slightly darker one.
+                    `text-white` means emphasis, which is dark ink here.
+     --color-black  becomes paper, for the few `bg-black/20` washes.
+
+   The slate ramp is then mirrored about 500, so `text-slate-400` stays "one
+   step quieter than body text" instead of becoming unreadable.
+--------------------------------------------------------------------------- */
 :root {
   color-scheme: dark;
+  --app-canvas: #0a0d0c;
+  --app-ink: #e5e7eb;
+  --app-wash: 0.16;
+  --app-scroll: #24322e;
+  --app-scroll-hover: #33463f;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --app-canvas: #f6f7f9;
+  --app-ink: #1e293b;
+  --app-wash: 0.1;
+  --app-scroll: #cbd5e1;
+  --app-scroll-hover: #94a3b8;
+
+  --color-white: #0f172a;
+  --color-sidebar: rgb(255 255 255 / 0.75);
+
+  /* `--color-black` is deliberately NOT inverted. Its only uses are the scrims
+     drawn over cover art and the modal backdrop, and those are meant to be dark
+     in both themes — the artwork underneath doesn't change with the theme. */
+
+  /* Tints that read as "quietly coloured" on a dark panel are close to
+     invisible on a white one, so the soft shades step down to their deep
+     equivalents. The 500s are untouched: they are fills, not text. */
+  --color-accent-300: var(--accent-deep);
+  --color-accent-400: var(--accent-deep);
+  --color-emerald-300: #047857;
+  --color-emerald-400: #059669;
+  --color-amber-300: #b45309;
+  --color-amber-400: #d97706;
+  --color-rose-300: #be123c;
+  --color-rose-400: #e11d48;
+  --color-sky-300: #0369a1;
+  --color-sky-400: #0284c7;
+
+  --color-slate-200: #1e293b;
+  --color-slate-300: #334155;
+  --color-slate-400: #475569;
+  --color-slate-500: #64748b;
+  --color-slate-600: #94a3b8;
+  --color-slate-700: #cbd5e1;
+  --color-slate-800: #e2e8f0;
+  --color-slate-900: #f1f5f9;
+  --color-slate-950: #f8fafc;
 }
 
 html,
@@ -14,27 +155,31 @@ body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
-  color: #e5e7eb;
+  color: var(--app-ink);
   background:
-    radial-gradient(1200px 800px at 12% -10%, rgba(20, 184, 166, 0.16), transparent 55%),
-    radial-gradient(1000px 700px at 100% 0%, rgba(245, 158, 11, 0.10), transparent 50%),
-    #0a0d0c;
+    radial-gradient(
+      1200px 800px at 12% -10%,
+      color-mix(in oklab, var(--color-accent-500) calc(var(--app-wash) * 100%), transparent),
+      transparent 55%
+    ),
+    radial-gradient(1000px 700px at 100% 0%, rgba(245, 158, 11, 0.09), transparent 50%),
+    var(--app-canvas);
   overflow: hidden;
 }
 
-/* thin, dark scrollbars that fit the theme */
+/* thin scrollbars that follow the theme */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #24322e;
+  background: var(--app-scroll);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #33463f;
+  background: var(--app-scroll-hover);
   background-clip: content-box;
 }
 ::-webkit-scrollbar-track {
@@ -51,8 +196,8 @@ textarea {
   user-select: text;
 }
 
-/* Keep native <select> dropdowns dark to match the theme (WebView2 otherwise
-   renders the option list with a light system background). */
+/* Match native <select> dropdowns to the theme; WebView2 otherwise renders the
+   option list with the system background regardless of the page. */
 select {
   color-scheme: dark;
 }
@@ -60,6 +205,14 @@ select option,
 select optgroup {
   background-color: #0f172a; /* slate-900 */
   color: #e5e7eb;
+}
+:root[data-theme="light"] select {
+  color-scheme: light;
+}
+:root[data-theme="light"] select option,
+:root[data-theme="light"] select optgroup {
+  background-color: #ffffff;
+  color: #1e293b;
 }
 
 @keyframes bv-spin {

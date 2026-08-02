@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { api, pickFolder, Settings } from "../api";
-import { Button, Icon } from "../ui";
+import { ACCENTS, Appearance, AppTheme } from "../appearance";
+import { Button, Icon, cx } from "../ui";
 
 export default function SettingsPage({
   settings,
+  appearance,
+  onAppearance,
   onSaved,
 }: {
   settings: Settings | null;
+  appearance: Appearance;
+  onAppearance: (a: Appearance) => void;
   onSaved: () => Promise<void> | void;
 }) {
   const [booksRoot, setBooksRoot] = useState("");
@@ -72,7 +77,7 @@ export default function SettingsPage({
               value={booksRoot}
               onChange={(e) => setBooksRoot(e.target.value)}
               placeholder="e.g. C:\Users\you\Books"
-              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-accent-500/50"
             />
             <Button variant="subtle" onClick={browse}>
               <Icon name="folder" className="h-4 w-4" /> Browse
@@ -92,7 +97,7 @@ export default function SettingsPage({
               value={comicsRoot}
               onChange={(e) => setComicsRoot(e.target.value)}
               placeholder="e.g. C:\Users\you\Comics"
-              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-accent-500/50"
             />
             <Button variant="subtle" onClick={browseComics}>
               <Icon name="folder" className="h-4 w-4" /> Browse
@@ -113,9 +118,71 @@ export default function SettingsPage({
         </div>
       </section>
 
+      <section className="space-y-5 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+        <div>
+          <h2 className="text-sm font-semibold">Appearance</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            How the app looks. A book's own page — paper, sepia, night — is set in the
+            reader's type menu, and isn't affected by this.
+          </p>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium">Theme</label>
+          <div className="inline-flex rounded-lg border border-white/10 p-0.5">
+            {(
+              [
+                { id: "dark", label: "Dark", icon: "flame" },
+                { id: "light", label: "Light", icon: "sparkles" },
+              ] as { id: AppTheme; label: string; icon: string }[]
+            ).map((t) => (
+              <button
+                key={t.id}
+                onClick={() => onAppearance({ ...appearance, theme: t.id })}
+                className={cx(
+                  "flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors",
+                  appearance.theme === t.id
+                    ? "bg-accent-600/20 text-white ring-1 ring-inset ring-accent-500/30"
+                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                )}
+              >
+                <Icon name={t.icon} className="h-4 w-4" />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium">Accent</label>
+          <div className="flex flex-wrap items-center gap-2">
+            {ACCENTS.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => onAppearance({ ...appearance, accent: a.id })}
+                title={a.label}
+                aria-label={a.label}
+                aria-pressed={appearance.accent === a.id}
+                className={cx(
+                  "grid h-8 w-8 place-items-center rounded-full transition-transform hover:scale-110",
+                  appearance.accent === a.id
+                    ? "ring-2 ring-white/70 ring-offset-2 ring-offset-transparent"
+                    : "ring-1 ring-white/15"
+                )}
+                style={{ background: a.swatch }}
+              >
+                {appearance.accent === a.id && (
+                  <Icon name="check" className="h-4 w-4 text-on-accent" />
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-xl border border-white/10 bg-white/[0.02] p-5 text-sm text-slate-400">
         <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-300">
-          <Icon name="sparkles" className="h-4 w-4 text-teal-400" /> About metadata
+          <Icon name="sparkles" className="h-4 w-4 text-accent-400" /> About metadata
         </h2>
         <p className="leading-relaxed">
           Shelfmark first reads metadata embedded in each file. From a book's detail panel you can also
