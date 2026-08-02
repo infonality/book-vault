@@ -556,7 +556,7 @@ function BookCard({
     <div className="group cursor-pointer" onClick={onClick} onDoubleClick={onOpen}>
       <div
         className={cx(
-          "relative aspect-[2/3] overflow-hidden rounded-lg border bg-slate-800 transition-colors",
+          "relative aspect-[2/3] overflow-hidden rounded-cover border bg-slate-800 transition-colors",
           active ? "border-accent-500/60 ring-2 ring-accent-500/25" : "border-white/10 group-hover:border-white/25"
         )}
       >
@@ -604,9 +604,9 @@ function SeriesCard({ group, onOpen }: { group: SeriesGroup; onOpen: () => void 
         {/* The cover sits at the left of the box and two plates fan out behind
             it to the right, so a series reads as a stack at a glance. Everything
             stays inside the tile — no bleeding into the grid gap. */}
-        <div className="absolute inset-y-4 left-4 right-0 rounded-lg border border-white/10 bg-slate-600 shadow-lg transition-transform group-hover:translate-x-1" />
-        <div className="absolute inset-y-2 left-2 right-2 rounded-lg border border-white/10 bg-slate-500 shadow-lg transition-transform group-hover:translate-x-0.5" />
-        <div className="absolute inset-y-0 left-0 right-4 overflow-hidden rounded-lg border border-white/10 bg-slate-800 shadow-xl transition-colors group-hover:border-white/25">
+        <div className="absolute inset-y-4 left-4 right-0 rounded-cover border border-white/10 bg-slate-600 shadow-lg transition-transform group-hover:translate-x-1" />
+        <div className="absolute inset-y-2 left-2 right-2 rounded-cover border border-white/10 bg-slate-500 shadow-lg transition-transform group-hover:translate-x-0.5" />
+        <div className="absolute inset-y-0 left-0 right-4 overflow-hidden rounded-cover border border-white/10 bg-slate-800 shadow-xl transition-colors group-hover:border-white/25">
           {img ? (
             <img src={img} alt="" className="h-full w-full object-cover" loading="lazy" />
           ) : (
@@ -882,7 +882,7 @@ function BookDrawer({
         <div className="space-y-6 p-5">
           {/* Header: cover + title + reading state */}
           <div className="flex gap-4">
-            <div className="h-44 w-30 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-slate-800" style={{ width: "8rem" }}>
+            <div className="h-44 w-30 shrink-0 overflow-hidden rounded-cover border border-white/10 bg-slate-800" style={{ width: "8rem" }}>
               {img ? (
                 <img src={img} alt={book.title} className="h-full w-full object-cover" />
               ) : (

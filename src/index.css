@@ -25,6 +25,33 @@
   /* The sidebar, which needs to separate from the canvas in both directions:
      darker than a dark canvas, lighter than a light one. */
   --color-sidebar: rgb(0 0 0 / 0.22);
+
+  /* ---- Corner radius -------------------------------------------------------
+     The cover radius anchors the whole language. In the spirit of Apple Books,
+     a cover is softened rather than rounded: a printed cover has almost no
+     radius, and past about 5px at grid size the tile reads as an app icon
+     instead of a book.
+
+     Controls — buttons, nav items, inputs, badges, the highlight behind a
+     selected row — take exactly that value, so a button sitting next to a cover
+     belongs to the same family. Containers step up once: a large panel with a
+     4px corner reads as untrimmed rather than deliberate, and 8px is close
+     enough to stay in the family.
+
+     These redefine Tailwind's own scale rather than adding new names. Every
+     `rounded-lg` already in the app follows without touching a hundred call
+     sites, and nothing can drift back out of the system later by reaching for a
+     different size. `rounded-full` is untouched — pills, dots and progress bars
+     are meant to be circular.
+
+     Small list thumbnails deliberately keep the bare `rounded` (4px, hardcoded
+     by Tailwind): at 11px tall anything larger would be a third of the height. */
+  --radius-cover: 4px;
+  --radius-sm: var(--radius-cover);
+  --radius-md: var(--radius-cover);
+  --radius-lg: var(--radius-cover);
+  --radius-xl: 8px;
+  --radius-2xl: 8px;
 }
 
 /* Each accent carries two "soft" shades rather than one, because a tint that

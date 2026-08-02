@@ -240,7 +240,7 @@ function FinishedCard({ book, onOpen }: { book: Book; onOpen: () => void }) {
   const img = assetUrl(book.cover_path);
   return (
     <button onClick={onOpen} className="group text-left" title={book.title}>
-      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 to-slate-900">
+      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-cover border border-white/10 bg-gradient-to-br from-slate-800 to-slate-900">
         {img ? (
           <img src={img} alt={book.title} className="h-full w-full object-cover" loading="lazy" />
         ) : (
