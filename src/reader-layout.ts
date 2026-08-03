@@ -301,6 +301,43 @@ function decode(s: string): string {
   }
 }
 
+/** Namespaces whose elements the HTML parser knows how to adopt on sight. */
+const FOREIGN_NS = [
+  "http://www.w3.org/2000/svg",
+  "http://www.w3.org/1998/Math/MathML",
+];
+
+/**
+ * Drop the namespace prefix from SVG and MathML element names.
+ *
+ * A chapter is XHTML, but it is parsed here as HTML, which is far more
+ * forgiving of the malformed markup real EPUBs are full of. The one thing HTML
+ * parsing cannot do is honour a namespace prefix: written `<svg:svg>`, the
+ * parser produces an unknown element in the XHTML namespace — no box, no
+ * rendered children — so a cover page authored that way comes out completely
+ * blank. Written `<svg>`, the same parser adopts it into the SVG namespace and
+ * it renders. The prefix is the only difference.
+ *
+ * Only prefixes the document itself binds to SVG or MathML are touched, and
+ * only where they open or close a tag, so this can't disturb prose that happens
+ * to contain a colon after a less-than sign.
+ */
+export function unprefixForeignMarkup(html: string): string {
+  const declarations = /xmlns:([A-Za-z_][\w.-]*)\s*=\s*["']([^"']+)["']/g;
+  const prefixes = new Set<string>();
+  for (const m of html.matchAll(declarations)) {
+    if (FOREIGN_NS.includes(m[2].trim())) prefixes.add(m[1]);
+  }
+  if (prefixes.size === 0) return html;
+
+  let out = html;
+  for (const prefix of prefixes) {
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+    out = out.replace(new RegExp(`(</?)${escaped}:(?=[A-Za-z])`, "g"), "$1");
+  }
+  return out;
+}
+
 /**
  * Wrap chapter markup for the frame. A `<base>` pointed at the chapter's folder
  * inside the archive makes every relative URL the publisher wrote — images,
@@ -313,7 +350,7 @@ function decode(s: string): string {
  */
 export function buildDocument(chapter: Chapter, resourceBase: string): string {
   const base = `${resourceBase}${chapter.dir ? `${chapter.dir}/` : ""}`;
-  const doc = new DOMParser().parseFromString(chapter.html, "text/html");
+  const doc = new DOMParser().parseFromString(unprefixForeignMarkup(chapter.html), "text/html");
 
   const baseEl = doc.createElement("base");
   baseEl.setAttribute("href", base);
