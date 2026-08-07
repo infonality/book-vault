@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Annotation,
   api,
@@ -115,6 +116,7 @@ export default function Reader({
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
   const [cols, setCols] = useState<1 | 2>(1);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const frameRef = useRef<HTMLIFrameElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -321,18 +323,7 @@ export default function Reader({
       // refs because this handler runs once per chapter, while `turn` changes
       // on every page.
       doc.addEventListener("wheel", (e) => wheelRef.current(e as WheelEvent), { passive: true });
-      doc.addEventListener("keydown", (e) => {
-        const ke = e as KeyboardEvent;
-        if (ke.key === "Escape") return escapeRef.current();
-        if (ke.key === "ArrowRight" || ke.key === "PageDown" || ke.key === " ") {
-          ke.preventDefault();
-          turnRef.current(1);
-        }
-        if (ke.key === "ArrowLeft" || ke.key === "PageUp") {
-          ke.preventDefault();
-          turnRef.current(-1);
-        }
-      });
+      doc.addEventListener("keydown", (e) => keyRef.current(e as KeyboardEvent));
 
       // First pass positions the chapter; the second corrects it once the
       // things that change its measurements have arrived.
@@ -438,10 +429,23 @@ export default function Reader({
   // the frame's document.
   const turnRef = useRef(turn);
   const goToRef = useRef(goToChapter);
-  const escapeRef = useRef<() => void>(() => {});
   turnRef.current = turn;
   goToRef.current = goToChapter;
-  escapeRef.current = () => (menu ? setMenu(null) : onClose?.());
+
+  /**
+   * Fullscreen the window. Unlike the comic reader this leaves the chrome up:
+   * the header carries the chapter you're in and how far through you are, and
+   * a book is read for long enough that losing both is a poor trade for two
+   * thin strips of screen.
+   */
+  const setFull = useCallback(async (want: boolean) => {
+    try {
+      await getCurrentWindow().setFullscreen(want);
+      setFullscreen(want);
+    } catch {
+      /* a window manager that refuses just leaves us as we were */
+    }
+  }, []);
 
   /**
    * One page per wheel gesture's worth of movement.
@@ -484,21 +488,75 @@ export default function Reader({
     return () => host.removeEventListener("wheel", handler);
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") return menu ? setMenu(null) : onClose?.();
+  /**
+   * The reader's keys, for both the window and the frame's own document — once
+   * the frame has focus the window stops seeing anything typed into it, and two
+   * copies of this would drift apart.
+   */
+  const onKey = useCallback(
+    (e: KeyboardEvent) => {
+      // Space is a page turn everywhere except in the search field, where it is
+      // a space. Letters likewise: `c` typed into a query must not open the
+      // contents. Escape still gets out of the field, rather than being
+      // swallowed by it.
+      const el = e.target as HTMLElement | null;
+      if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setPanel(null);
+        }
+        return;
+      }
+      // A shortcut is the bare key. Ctrl+C is a copy and Ctrl+F is whatever the
+      // reader asked their system for — neither is ours to take.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Both the character and the physical key count. A layout that puts
+      // something else on that key, or an input method part-way through a
+      // composition — which reports the character as "Process" — would
+      // otherwise make the letter shortcuts unreachable.
+      const is = (letter: string, code: string) =>
+        e.key === letter || e.key === letter.toUpperCase() || e.code === code;
+
+      if (e.key === "Escape") {
+        // One layer at a time — the menu, then fullscreen, then the window.
+        // Closing the book outright from fullscreen is too big a jump for one
+        // key.
+        if (menu) setMenu(null);
+        else if (fullscreen) setFull(false);
+        else onClose?.();
+        return;
+      }
+      if (is("f", "KeyF")) {
+        e.preventDefault();
+        setFull(!fullscreen);
+        return;
+      }
+      if (is("c", "KeyC")) {
+        e.preventDefault();
+        setPanel((p) => (p === "toc" ? null : "toc"));
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
         e.preventDefault();
         turn(1);
+        return;
       }
       if (e.key === "ArrowLeft" || e.key === "PageUp") {
         e.preventDefault();
         turn(-1);
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [turn, onClose, menu]);
+    },
+    [turn, onClose, menu, fullscreen, setFull]
+  );
+  const keyRef = useRef(onKey);
+  keyRef.current = onKey;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // ---- persist position ----
   const percent = chapter ? percentAt(chapter.index, pages > 1 ? page / pages : 0) : 0;
@@ -614,10 +672,10 @@ export default function Reader({
       <header
         data-tauri-drag-region
         className="flex shrink-0 items-center gap-2 px-3 py-2"
-        style={{ paddingLeft: 12 + TRAFFIC_LIGHT_INSET }}
+        style={{ paddingLeft: 12 + (fullscreen ? 0 : TRAFFIC_LIGHT_INSET) }}
       >
         {/* macOS already provides a close button in the traffic lights. */}
-        {onClose && !IS_MAC && (
+        {onClose && !IS_MAC && !fullscreen && (
           <button
             onClick={onClose}
             title="Close (Esc)"
@@ -628,7 +686,7 @@ export default function Reader({
         )}
         <button
           onClick={() => setPanel((p) => (p === "toc" ? null : "toc"))}
-          title="Contents"
+          title="Contents (C)"
           className={cx(
             "rounded-md p-2 transition-colors",
             panel === "toc" ? "bg-white/15 text-white" : "text-white/50 hover:bg-white/10 hover:text-white"
@@ -676,7 +734,14 @@ export default function Reader({
         >
           <Icon name="type" className="h-4 w-4" />
         </button>
-        {onOpenExternally && (
+        <button
+          onClick={() => setFull(!fullscreen)}
+          title={fullscreen ? "Leave fullscreen (F or Esc)" : "Fullscreen (F)"}
+          className="rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
+        >
+          <Icon name={fullscreen ? "collapse" : "expand"} className="h-4 w-4" />
+        </button>
+        {onOpenExternally && !fullscreen && (
           <button
             onClick={onOpenExternally}
             title="Open in your system EPUB reader"
