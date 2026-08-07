@@ -132,6 +132,29 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M20.5 15.2c-3 0-4.5.6-4.5 1.9a1.5 1.5 0 0 0 1.7 1.4c1.5 0 2.8-1 2.8-2.2Z" />
     </>
   ),
+  expand: (
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </>
+  ),
+  collapse: (
+    <>
+      <path d="M3 8h3a2 2 0 0 0 2-2V3" />
+      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+      <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+    </>
+  ),
+  onePage: <rect x="7" y="4" width="10" height="16" rx="1.5" />,
+  twoPage: (
+    <>
+      <rect x="3" y="4" width="8" height="16" rx="1.5" />
+      <rect x="13" y="4" width="8" height="16" rx="1.5" />
+    </>
+  ),
   read: (
     <>
       <path d="M12 7.5C10.5 6 8.5 5.2 6 5.2c-1 0-2 .1-3 .4v12.6c1-.3 2-.4 3-.4 2.5 0 4.5.8 6 2.3" />

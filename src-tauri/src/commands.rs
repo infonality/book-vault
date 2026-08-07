@@ -207,20 +207,47 @@ pub struct ComicSession {
     pub resource_base: String,
     pub locator: Option<String>,
     pub title: String,
+    /// "rtl" or "ltr". Page order in the archive never changes — this is only
+    /// which way the reader moves through it.
+    pub direction: String,
+    /// Whether this comic belongs to a series, so the reader can offer to set
+    /// the direction for the whole run at once.
+    pub series: Option<String>,
 }
 
 #[tauri::command]
 pub fn comic_open(state: State<'_, AppState>, id: i64) -> CmdResult<ComicSession> {
-    let (path, title, locator) = {
+    let (path, title, locator, direction, series) = {
         let conn = state.conn.lock().map_err(s)?;
         let b = db::require_book(&conn, id).map_err(s)?;
-        (b.path, b.title, db::get_locator(&conn, id).map_err(s)?)
+        let dir = b.reading_direction.clone().unwrap_or_else(|| "ltr".into());
+        (b.path, b.title, db::get_locator(&conn, id).map_err(s)?, dir, b.series)
     };
     if !std::path::Path::new(&path).is_file() {
         return Err(format!("The file is no longer at {path}. Rescan your library."));
     }
     let book = crate::comics::open(std::path::Path::new(&path)).map_err(|e| format!("{e:#}"))?;
-    Ok(ComicSession { pages: book.pages, resource_base: resource_base(id), locator, title })
+    Ok(ComicSession {
+        pages: book.pages,
+        resource_base: resource_base(id),
+        locator,
+        title,
+        direction,
+        series,
+    })
+}
+
+/// Set which way a comic reads, optionally for its whole series.
+#[tauri::command]
+pub fn set_reading_direction(
+    state: State<'_, AppState>,
+    id: i64,
+    direction: String,
+    wholeSeries: bool,
+) -> CmdResult<usize> {
+    let dir = if direction == "rtl" { "rtl" } else { "ltr" };
+    let conn = state.conn.lock().map_err(s)?;
+    db::set_reading_direction(&conn, id, dir, wholeSeries, now_ts()).map_err(s)
 }
 
 // ---------------- highlights & bookmarks ----------------

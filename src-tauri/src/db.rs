@@ -93,6 +93,10 @@ fn migrate(conn: &Connection) -> Result<()> {
     // format can't decide this on its own — a comic is often a PDF — so the
     // folder it came from does, and this records the answer.
     add_column(conn, "books", "kind", "TEXT NOT NULL DEFAULT 'book'")?;
+    // Which way a comic reads. Null means left-to-right; only manga and a
+    // handful of other runs need the other answer, and almost no archive says
+    // so itself, which is why this is a choice rather than a detection.
+    add_column(conn, "books", "reading_direction", "TEXT")?;
     conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_books_kind ON books(kind);")?;
     Ok(())
 }
@@ -155,7 +159,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 const BOOK_COLS: &str = "id, path, filename, format, size, title, author, series, publisher,
     published_date, language, isbn, description, category, subjects, cover_path, pages, words,
     words_estimated, status, current_page, rating, meta_status, meta_source, started_at,
-    finished_at, last_opened_at, locator, kind, added_at, updated_at";
+    finished_at, last_opened_at, locator, kind, reading_direction, added_at, updated_at";
 
 fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -188,8 +192,9 @@ fn row_to_book(r: &Row) -> rusqlite::Result<Book> {
         last_opened_at: r.get(26)?,
         locator: r.get(27)?,
         kind: r.get(28)?,
-        added_at: r.get(29)?,
-        updated_at: r.get(30)?,
+        reading_direction: r.get(29)?,
+        added_at: r.get(30)?,
+        updated_at: r.get(31)?,
     })
 }
 
@@ -419,6 +424,30 @@ pub fn save_locator(conn: &Connection, id: i64, locator: &str, percent: f64, now
         params![id, locator, page, status, started, now],
     )?;
     Ok(())
+}
+
+/// Set which way a comic reads. With `whole_series`, every comic sharing its
+/// series is set too — nobody wants to answer this once per volume for a run a
+/// hundred issues long. Returns how many rows changed.
+pub fn set_reading_direction(
+    conn: &Connection,
+    id: i64,
+    direction: &str,
+    whole_series: bool,
+    now: i64,
+) -> Result<usize> {
+    let book = get_book(conn, id)?.ok_or_else(|| anyhow::anyhow!("Book not found"))?;
+    let series = book.series.as_deref().unwrap_or("").trim().to_string();
+    if whole_series && !series.is_empty() {
+        return Ok(conn.execute(
+            "UPDATE books SET reading_direction=?1, updated_at=?2 WHERE kind='comic' AND series=?3",
+            params![direction, now, series],
+        )?);
+    }
+    Ok(conn.execute(
+        "UPDATE books SET reading_direction=?2, updated_at=?3 WHERE id=?1",
+        params![id, direction, now],
+    )?)
 }
 
 pub fn get_locator(conn: &Connection, id: i64) -> Result<Option<String>> {

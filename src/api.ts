@@ -40,6 +40,7 @@ export interface Book {
   locator: string | null;
   /** book | comic — which section of the library this belongs to. */
   kind: Kind;
+  reading_direction: ReadingDirection | null;
   added_at: number;
   updated_at: number;
 }
@@ -180,6 +181,8 @@ export interface Locator {
   ratio: number;
 }
 
+export type ReadingDirection = "ltr" | "rtl";
+
 /** Everything the comic reader needs to open an issue. */
 export interface ComicSession {
   /** Entry paths inside the archive, in reading order. */
@@ -188,6 +191,10 @@ export interface ComicSession {
   resource_base: string;
   locator: string | null;
   title: string;
+  /** Which way the reader moves through the pages — the archive order is fixed. */
+  direction: ReadingDirection;
+  /** Set when the comic belongs to a run, so the whole run can be set at once. */
+  series: string | null;
 }
 
 /** Where the comic reader left off. Comics have no reflow, so a page index
@@ -253,6 +260,9 @@ export const api = {
     invoke<Book>("reader_save_position", { id, locator, percent }),
 
   comicOpen: (id: number) => invoke<ComicSession>("comic_open", { id }),
+  /** Returns how many books were changed. */
+  setReadingDirection: (id: number, direction: ReadingDirection, wholeSeries: boolean) =>
+    invoke<number>("set_reading_direction", { id, direction, wholeSeries }),
 
   readerSearch: (id: number, query: string) =>
     invoke<SearchHit[]>("reader_search", { id, query }),

@@ -55,6 +55,8 @@ pub struct Book {
     /// book | comic. Decided by which root the file was found under, except
     /// for cbz/cbr which are comics wherever they live.
     pub kind: String,
+    /// "rtl" for a comic that reads right to left; null or "ltr" otherwise.
+    pub reading_direction: Option<String>,
     pub added_at: i64,
     pub updated_at: i64,
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Book, ComicLocator, ComicSession } from "../api";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { api, Book, ComicLocator, ComicSession, ReadingDirection } from "../api";
 import { cx, Icon, Spinner } from "../ui";
 import { IS_MAC, TRAFFIC_LIGHT_INSET } from "../platform";
 
@@ -13,18 +14,24 @@ import { IS_MAC, TRAFFIC_LIGHT_INSET } from "../platform";
  * are fetched as they are reached and the neighbours are warmed in the
  * background, which is what makes a turn land instantly without keeping the
  * issue in memory.
+ *
+ * Direction is a reading control, not a data one: the pages keep their order in
+ * the archive and only the way you move through them changes. Manga reads right
+ * to left, and almost no archive says so itself, so it has to be chosen — and
+ * chosen once per run rather than once per volume.
  */
 
 /** How a page is sized against the window. */
-type Fit = "page" | "width" | "actual";
+type Fit = "width" | "height" | "actual";
 
 const FITS: { id: Fit; label: string; hint: string }[] = [
-  { id: "page", label: "Page", hint: "Fit the whole page" },
-  { id: "width", label: "Width", hint: "Fill the width and scroll" },
+  { id: "height", label: "Height", hint: "Fill the height and scroll across" },
+  { id: "width", label: "Width", hint: "Fill the width and scroll down" },
   { id: "actual", label: "1:1", hint: "Actual size" },
 ];
 
 const FIT_KEY = "bv.comicFit";
+const TWO_UP_KEY = "bv.comicTwoUp";
 /** A wheel gesture shouldn't fire a second turn until it settles. */
 const WHEEL_COOLDOWN = 260;
 /** How many pages ahead to warm. One back covers a change of mind. */
@@ -32,7 +39,11 @@ const AHEAD = 2;
 
 function loadFit(): Fit {
   const saved = localStorage.getItem(FIT_KEY);
-  return saved === "width" || saved === "actual" ? saved : "page";
+  // "page" was the old fit-the-whole-page mode. On a portrait scan it produced
+  // the same result as fitting the height, so it went; anyone who had it
+  // selected lands on the mode that behaves the way theirs did.
+  if (saved === "width" || saved === "actual" || saved === "height") return saved;
+  return "height";
 }
 
 /**
@@ -44,6 +55,38 @@ function pageUrl(session: ComicSession, index: number): string {
   const entry = session.pages[index];
   if (!entry) return "";
   return session.resource_base + entry.split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * Group pages into what gets shown at once.
+ *
+ * Two rules keep a spread honest. The cover stands alone, because pairing it
+ * puts every later spread one page out of step — the left-hand page should be
+ * the one printed on the left. And a page wider than it is tall is a
+ * double-page picture scanned as a single image, so it stands alone too;
+ * pairing it would put two spreads on screen at once.
+ *
+ * Which pages are wide isn't known until they load, so `wide` fills in as you
+ * read and the grouping settles with it.
+ */
+export function buildSpreads(count: number, twoUp: boolean, wide: Set<number>): number[][] {
+  const out: number[][] = [];
+  let i = 0;
+  while (i < count) {
+    if (!twoUp || i === 0 || wide.has(i)) {
+      out.push([i]);
+      i += 1;
+      continue;
+    }
+    if (i + 1 < count && !wide.has(i + 1)) {
+      out.push([i, i + 1]);
+      i += 2;
+      continue;
+    }
+    out.push([i]);
+    i += 1;
+  }
+  return out;
 }
 
 export default function ComicReader({
@@ -61,7 +104,13 @@ export default function ComicReader({
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [fit, setFit] = useState<Fit>(loadFit);
-  const [loaded, setLoaded] = useState(false);
+  const [twoUp, setTwoUp] = useState(() => localStorage.getItem(TWO_UP_KEY) === "1");
+  const [direction, setDirection] = useState<ReadingDirection>("ltr");
+  const [wide, setWide] = useState<Set<number>>(() => new Set());
+  const [fullscreen, setFullscreen] = useState(false);
+  const [chrome, setChrome] = useState(true);
+  const [loadedPages, setLoadedPages] = useState<Set<number>>(() => new Set());
+  const rtl = direction === "rtl";
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastWheel = useRef(0);
@@ -75,6 +124,7 @@ export default function ComicReader({
       .then((s) => {
         if (!alive) return;
         setSession(s);
+        setDirection(s.direction === "rtl" ? "rtl" : "ltr");
         let start = 0;
         if (s.locator) {
           try {
@@ -95,40 +145,76 @@ export default function ComicReader({
   useEffect(() => {
     localStorage.setItem(FIT_KEY, fit);
   }, [fit]);
-
-  const src = useMemo(
-    () => (session ? pageUrl(session, page) : ""),
-    [session, page]
-  );
-
-  // A new page starts unloaded, so the spinner shows rather than the previous
-  // page lingering under a stale label.
   useEffect(() => {
-    setLoaded(false);
+    localStorage.setItem(TWO_UP_KEY, twoUp ? "1" : "0");
+  }, [twoUp]);
+
+  // ---- what's on screen ----
+  const spreads = useMemo(() => buildSpreads(count, twoUp, wide), [count, twoUp, wide]);
+  const at = useMemo(() => {
+    const map = new Map<number, number>();
+    spreads.forEach((s, i) => s.forEach((p) => map.set(p, i)));
+    return map;
+  }, [spreads]);
+  const index = at.get(page) ?? 0;
+  const shown = useMemo(() => spreads[index] ?? [page], [spreads, index, page]);
+  const shownKey = shown.join(",");
+  const pair = shown.length > 1;
+
+  /** A page that turns out to be landscape is a double-page picture. */
+  const noteSize = useCallback((i: number, el: HTMLImageElement) => {
+    if (el.naturalWidth > el.naturalHeight) {
+      setWide((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
+    }
+  }, []);
+
+  /**
+   * Readiness is which pages have loaded, not how many load events have been
+   * seen. Counting events cannot work here: the images are keyed by page, so
+   * turning on two-page view reuses the element for the page already on screen
+   * and its `src` never changes — no second event ever arrives, and a counter
+   * waits for it forever behind a blank screen. Asking whether these particular
+   * pages have loaded has no such gap, and a page you return to is ready at once.
+   */
+  const markLoaded = useCallback((i: number) => {
+    setLoadedPages((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
+  }, []);
+  const done = shown.every((i) => loadedPages.has(i));
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0, left: 0 });
-  }, [page]);
+  }, [shownKey]);
 
   // ---- warm the neighbours ----
   // Decoding a page is the slow part, and the browser will hold these in its
-  // own cache (the protocol sends Cache-Control), so a turn is instant.
+  // own cache (the protocol sends Cache-Control), so a turn is instant. It also
+  // learns which pages are wide before you reach them, so a spread doesn't
+  // regroup under you.
   useEffect(() => {
     if (!session) return;
-    const wanted = [];
-    for (let i = 1; i <= AHEAD; i++) wanted.push(page + i);
-    wanted.push(page - 1);
+    const last = shown[shown.length - 1] ?? 0;
+    const first = shown[0] ?? 0;
+    const wanted: number[] = [];
+    for (let i = 1; i <= AHEAD * (twoUp ? 2 : 1); i++) wanted.push(last + i);
+    wanted.push(first - 1);
     for (const i of wanted) {
       if (i < 0 || i >= session.pages.length) continue;
       const img = new Image();
+      img.onload = () => {
+        noteSize(i, img);
+        markLoaded(i);
+      };
       img.src = pageUrl(session, i);
     }
-  }, [session, page]);
+  }, [session, shown, twoUp, noteSize, markLoaded]);
 
   // ---- navigation ----
   const turn = useCallback(
     (dir: 1 | -1) => {
-      setPage((p) => Math.min(Math.max(0, p + dir), Math.max(0, count - 1)));
+      const next = spreads[index + dir];
+      if (next) setPage(next[0]);
     },
-    [count]
+    [spreads, index]
   );
 
   const goTo = useCallback(
@@ -136,20 +222,72 @@ export default function ComicReader({
     [count]
   );
 
+  /**
+   * Flip the direction. It applies to the whole run when there is one: every
+   * volume of a series reads the same way, and answering this a hundred times
+   * for a hundred volumes would be its own kind of broken.
+   */
+  const flipDirection = useCallback(async () => {
+    const next: ReadingDirection = rtl ? "ltr" : "rtl";
+    setDirection(next);
+    try {
+      await api.setReadingDirection(book.id, next, !!session?.series);
+    } catch (e) {
+      setDirection(rtl ? "rtl" : "ltr");
+      alert(String(e));
+    }
+  }, [rtl, book.id, session]);
+
+  /**
+   * Fullscreen hides the chrome on the way in and brings it back on the way
+   * out, since the point of it is the page and nothing else. `i` overrides that
+   * either way.
+   */
+  const setFull = useCallback(async (want: boolean) => {
+    try {
+      await getCurrentWindow().setFullscreen(want);
+      setFullscreen(want);
+      setChrome(!want);
+    } catch {
+      /* a window manager that refuses just leaves us as we were */
+    }
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      const el = e.target as HTMLElement | null;
+      if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") return;
       switch (e.key) {
         case "Escape":
-          onClose?.();
+          // Escape backs out one layer at a time: fullscreen first, then the
+          // window. Closing the reader outright from fullscreen is too big a jump.
+          if (fullscreen) setFull(false);
+          else onClose?.();
+          break;
+        case "f":
+        case "F":
+          e.preventDefault();
+          setFull(!fullscreen);
+          break;
+        case "i":
+        case "I":
+          e.preventDefault();
+          setChrome((c) => !c);
           break;
         case "ArrowRight":
+          e.preventDefault();
+          turn(rtl ? -1 : 1);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          turn(rtl ? 1 : -1);
+          break;
+        // Space and PageDown mean "onward" in any direction.
         case "PageDown":
         case " ":
           e.preventDefault();
           turn(1);
           break;
-        case "ArrowLeft":
         case "PageUp":
           e.preventDefault();
           turn(-1);
@@ -166,7 +304,7 @@ export default function ComicReader({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [turn, goTo, count, onClose]);
+  }, [turn, goTo, count, onClose, rtl, fullscreen, setFull]);
 
   /**
    * Wheel behaviour depends on the fit. With the whole page visible there is
@@ -209,78 +347,136 @@ export default function ComicReader({
     return () => clearTimeout(t);
   }, [book.id, page, count, session, onProgress]);
 
-  const percent = count > 0 ? (page + 1) / count : 0;
+  const percent = count > 0 ? ((shown[shown.length - 1] ?? page) + 1) / count : 0;
+  const label =
+    count === 0
+      ? "…"
+      : pair
+        ? `Pages ${shown[0] + 1}–${shown[1] + 1} of ${count}`
+        : `Page ${page + 1} of ${count}`;
 
   const imgClass =
-    fit === "page"
-      ? "max-h-full max-w-full object-contain"
-      : fit === "width"
-        ? "w-full h-auto"
+    fit === "width"
+      ? cx("h-auto", pair ? "w-1/2" : "w-full")
+      : fit === "height"
+        ? "h-full w-auto max-w-none"
         : "max-w-none";
+
+  const overflow =
+    fit === "width"
+      ? "overflow-y-auto overflow-x-hidden"
+      : fit === "height"
+        ? "overflow-x-auto overflow-y-hidden"
+        : "overflow-auto";
 
   return (
     <div className="relative flex h-full flex-col bg-[#0e0e11] text-slate-200">
       {/* Chrome */}
-      <header
-        data-tauri-drag-region
-        className="flex shrink-0 items-center gap-2 px-3 py-2"
-        style={{ paddingLeft: 12 + TRAFFIC_LIGHT_INSET }}
-      >
-        {onClose && !IS_MAC && (
-          <button
-            onClick={onClose}
-            title="Close (Esc)"
-            className="rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
-          >
-            <Icon name="x" className="h-4 w-4" />
-          </button>
-        )}
-        <div className="min-w-0 flex-1 text-center">
-          <div className="truncate text-[13px] font-medium text-white/80">{book.title}</div>
-          <div className="truncate text-[11px] text-white/35">
-            {count > 0 ? `Page ${page + 1} of ${count}` : "…"}
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
-          {FITS.map((f) => (
+      {chrome && (
+        <header
+          data-tauri-drag-region
+          className="flex shrink-0 items-center gap-2 px-3 py-2"
+          style={{ paddingLeft: 12 + (fullscreen ? 0 : TRAFFIC_LIGHT_INSET) }}
+        >
+          {onClose && !IS_MAC && !fullscreen && (
             <button
-              key={f.id}
-              onClick={() => setFit(f.id)}
-              title={f.hint}
-              className={cx(
-                "rounded px-2 py-1 text-[11px] font-medium transition-colors",
-                fit === f.id
-                  ? "bg-white/15 text-white"
-                  : "text-white/45 hover:bg-white/10 hover:text-white"
-              )}
+              onClick={onClose}
+              title="Close (Esc)"
+              className="rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
             >
-              {f.label}
+              <Icon name="x" className="h-4 w-4" />
             </button>
-          ))}
-        </div>
+          )}
+          <div className="min-w-0 flex-1 text-center">
+            <div className="truncate text-[13px] font-medium text-white/80">{book.title}</div>
+            <div className="truncate text-[11px] text-white/35">{label}</div>
+          </div>
 
-        {onOpenExternally && (
+          <div className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
+            {FITS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFit(f.id)}
+                title={f.hint}
+                className={cx(
+                  "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                  fit === f.id
+                    ? "bg-white/15 text-white"
+                    : "text-white/45 hover:bg-white/10 hover:text-white"
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
+            {([
+              { on: false, icon: "onePage", hint: "One page at a time" },
+              { on: true, icon: "twoPage", hint: "Two pages side by side" },
+            ] as const).map((m) => (
+              <button
+                key={m.icon}
+                onClick={() => setTwoUp(m.on)}
+                title={m.hint}
+                aria-pressed={twoUp === m.on}
+                className={cx(
+                  "rounded p-1.5 transition-colors",
+                  twoUp === m.on
+                    ? "bg-white/15 text-white"
+                    : "text-white/45 hover:bg-white/10 hover:text-white"
+                )}
+              >
+                <Icon name={m.icon} className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+
           <button
-            onClick={onOpenExternally}
-            title="Open in your system comic reader"
-            className="rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
+            onClick={flipDirection}
+            disabled={!session}
+            title={
+              rtl
+                ? `Reading right to left${session?.series ? ` — applies to all of ${session.series}` : ""}. Click for left to right.`
+                : `Reading left to right${session?.series ? ` — applies to all of ${session.series}` : ""}. Click for right to left (manga).`
+            }
+            className={cx(
+              "shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium tabular-nums transition-colors",
+              rtl
+                ? "border-accent-500/40 bg-accent-500/15 text-accent-300"
+                : "border-white/10 text-white/45 hover:bg-white/10 hover:text-white"
+            )}
           >
-            <Icon name="open" className="h-4 w-4" />
+            {rtl ? "R → L" : "L → R"}
           </button>
-        )}
-      </header>
+
+          <button
+            onClick={() => setFull(!fullscreen)}
+            title={
+              fullscreen
+                ? "Leave fullscreen (F or Esc) — press I to hide these controls"
+                : "Fullscreen (F)"
+            }
+            className="shrink-0 rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
+          >
+            <Icon name={fullscreen ? "collapse" : "expand"} className="h-4 w-4" />
+          </button>
+
+          {onOpenExternally && !fullscreen && (
+            <button
+              onClick={onOpenExternally}
+              title="Open in your system comic reader"
+              className="rounded-md p-2 text-white/50 hover:bg-white/10 hover:text-white"
+            >
+              <Icon name="open" className="h-4 w-4" />
+            </button>
+          )}
+        </header>
+      )}
 
       {/* The page */}
       <div className="relative min-h-0 flex-1">
-        <div
-          ref={scrollRef}
-          className={cx(
-            "h-full w-full",
-            fit === "page" ? "overflow-hidden" : "overflow-auto",
-            fit === "actual" ? "grid place-items-start" : "grid place-items-center"
-          )}
-        >
+        <div ref={scrollRef} className={cx("h-full w-full", overflow)}>
           {error ? (
             <div className="grid h-full place-items-center p-8">
               <div className="max-w-md text-center">
@@ -294,20 +490,41 @@ export default function ComicReader({
             </div>
           ) : (
             <>
-              {!loaded && (
+              {!done && (
                 <div className="pointer-events-none absolute inset-0 grid place-items-center text-slate-600">
                   <Spinner className="h-6 w-6" />
                 </div>
               )}
-              <img
-                key={src}
-                src={src}
-                alt={`Page ${page + 1}`}
-                onLoad={() => setLoaded(true)}
-                onError={() => setLoaded(true)}
-                className={cx(imgClass, "select-none", loaded ? "opacity-100" : "opacity-0")}
-                draggable={false}
-              />
+              <div
+                className={cx(
+                  "flex h-full w-full items-center justify-center",
+                  // Right to left puts the earlier page on the right, which is
+                  // where it was printed.
+                  rtl && pair && "flex-row-reverse",
+                  fit === "actual" && "h-auto w-auto items-start justify-start"
+                )}
+              >
+                {shown.map((i) => (
+                  <img
+                    key={i}
+                    src={pageUrl(session, i)}
+                    alt={`Page ${i + 1}`}
+                    onLoad={(e) => {
+                      noteSize(i, e.currentTarget);
+                      markLoaded(i);
+                    }}
+                    // A page that fails still has to stop the spinner, or one
+                    // broken image freezes the reader.
+                    onError={() => markLoaded(i)}
+                    className={cx(
+                      imgClass,
+                      "select-none",
+                      done ? "opacity-100" : "opacity-0"
+                    )}
+                    draggable={false}
+                  />
+                ))}
+              </div>
             </>
           )}
         </div>
@@ -317,13 +534,13 @@ export default function ComicReader({
         {session && (
           <>
             <button
-              onClick={() => turn(-1)}
-              aria-label="Previous page"
+              onClick={() => turn(rtl ? 1 : -1)}
+              aria-label={rtl ? "Next page" : "Previous page"}
               className="absolute inset-y-0 left-0 w-[15%] cursor-w-resize opacity-0"
             />
             <button
-              onClick={() => turn(1)}
-              aria-label="Next page"
+              onClick={() => turn(rtl ? -1 : 1)}
+              aria-label={rtl ? "Previous page" : "Next page"}
               className="absolute inset-y-0 right-0 w-[15%] cursor-e-resize opacity-0"
             />
           </>
@@ -331,21 +548,24 @@ export default function ComicReader({
       </div>
 
       {/* Footer: a scrubber, because two hundred pages is a long way by arrow key. */}
-      <footer className="flex shrink-0 items-center gap-3 px-5 pb-2 pt-1.5">
-        <input
-          type="range"
-          min={0}
-          max={Math.max(0, count - 1)}
-          value={page}
-          onChange={(e) => goTo(Number(e.target.value))}
-          disabled={count === 0}
-          aria-label="Jump to page"
-          className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-white/15 accent-accent-500"
-        />
-        <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-white/35">
-          {count > 0 ? `${Math.round(percent * 100)}%` : ""}
-        </span>
-      </footer>
+      {chrome && (
+        <footer className="flex shrink-0 items-center gap-3 px-5 pb-2 pt-1.5">
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, count - 1)}
+            value={page}
+            onChange={(e) => goTo(Number(e.target.value))}
+            disabled={count === 0}
+            aria-label="Jump to page"
+            style={{ direction: rtl ? "rtl" : "ltr" }}
+            className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-white/15 accent-accent-500"
+          />
+          <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-white/35">
+            {count > 0 ? `${Math.round(percent * 100)}%` : ""}
+          </span>
+        </footer>
+      )}
     </div>
   );
 }

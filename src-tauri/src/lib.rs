@@ -114,6 +114,7 @@ pub fn run() {
             commands::reader_save_position,
             commands::reader_search,
             commands::comic_open,
+            commands::set_reading_direction,
             commands::list_annotations,
             commands::add_annotation,
             commands::update_annotation,
