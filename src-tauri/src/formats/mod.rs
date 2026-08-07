@@ -3,7 +3,7 @@
 //! itself, plus an embedded cover image when one is present.
 
 pub(crate) mod epub;
-mod comic;
+pub(crate) mod comic;
 mod mobi;
 mod pdf;
 

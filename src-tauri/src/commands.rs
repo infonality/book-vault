@@ -132,13 +132,13 @@ pub struct ReaderSession {
     pub title: String,
 }
 
-/// Base URL of the `epubres` protocol. Tauri maps custom schemes onto an
+/// Base URL of the `bookres` protocol. Tauri maps custom schemes onto an
 /// http origin on Windows and Android, and a real scheme elsewhere.
 fn resource_base(id: i64) -> String {
     #[cfg(any(windows, target_os = "android"))]
-    let base = format!("http://epubres.localhost/{id}/");
+    let base = format!("http://bookres.localhost/{id}/");
     #[cfg(not(any(windows, target_os = "android")))]
-    let base = format!("epubres://localhost/{id}/");
+    let base = format!("bookres://localhost/{id}/");
     base
 }
 
@@ -194,6 +194,33 @@ pub fn reader_search(
     // Capped so a single-letter query on a long book can't flood the UI.
     crate::reader::search(std::path::Path::new(&path), &query, 300)
         .map_err(|e| format!("{e:#}"))
+}
+
+// ---------------- built-in comic reader ----------------
+
+/// Everything the comic reader needs: the page list, where its images come
+/// from, and where the reader left off.
+#[derive(serde::Serialize)]
+pub struct ComicSession {
+    /// Entry paths inside the archive, in reading order.
+    pub pages: Vec<String>,
+    pub resource_base: String,
+    pub locator: Option<String>,
+    pub title: String,
+}
+
+#[tauri::command]
+pub fn comic_open(state: State<'_, AppState>, id: i64) -> CmdResult<ComicSession> {
+    let (path, title, locator) = {
+        let conn = state.conn.lock().map_err(s)?;
+        let b = db::require_book(&conn, id).map_err(s)?;
+        (b.path, b.title, db::get_locator(&conn, id).map_err(s)?)
+    };
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("The file is no longer at {path}. Rescan your library."));
+    }
+    let book = crate::comics::open(std::path::Path::new(&path)).map_err(|e| format!("{e:#}"))?;
+    Ok(ComicSession { pages: book.pages, resource_base: resource_base(id), locator, title })
 }
 
 // ---------------- highlights & bookmarks ----------------

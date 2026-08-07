@@ -18,8 +18,9 @@ use zip::ZipArchive;
 
 use super::{clean, CoverImage, ExtractedMeta};
 
-/// Page images, in the order a reader would see them.
-fn is_image(name: &str) -> bool {
+/// Page images, in the order a reader would see them. Shared with the comic
+/// reader, which needs the same notion of "is this a page" and the same order.
+pub(crate) fn is_image(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
         .iter()
@@ -82,7 +83,7 @@ pub fn extract(path: &std::path::Path) -> Result<ExtractedMeta> {
 }
 
 /// Compare names so embedded numbers order numerically: `p2` before `p10`.
-fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
     let mut ai = a.chars().peekable();
     let mut bi = b.chars().peekable();

@@ -9,9 +9,16 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Book } from "./api";
 
-/** Whether the built-in reader can show this book, or the OS has to. */
+/**
+ * Whether a built-in reader can show this, or the OS has to.
+ *
+ * CBR is excluded on purpose and not by oversight: RAR's reference decoder
+ * can't be vendored into an MIT project, so the archive is never opened. PDFs
+ * go to the system viewer for now, comics and books alike.
+ */
 export function readsInApp(book: Book): boolean {
-  return book.kind !== "comic" && book.format.toLowerCase() === "epub";
+  const format = book.format.toLowerCase();
+  return book.kind === "comic" ? format === "cbz" : format === "epub";
 }
 
 /**

@@ -3,12 +3,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, Book } from "../api";
 import { Icon, Spinner } from "../ui";
 import Reader from "./Reader";
+import ComicReader from "./ComicReader";
 import "../index.css";
 
 /**
  * Host for a standalone reader window. The library spawns one of these per
  * book with `?book=<id>`, so reading has its own window, its own taskbar entry,
  * and can sit alongside the library rather than covering it.
+ *
+ * Which reader appears is decided here rather than by the caller: a comic and a
+ * book open the same way and differ only in what draws the page.
  */
 export default function ReaderWindow({ bookId }: { bookId: number }) {
   const [book, setBook] = useState<Book | null>(null);
@@ -60,5 +64,8 @@ export default function ReaderWindow({ bookId }: { bookId: number }) {
     );
   }
 
+  if (book.kind === "comic") {
+    return <ComicReader book={book} onClose={close} onOpenExternally={openExternally} />;
+  }
   return <Reader book={book} onClose={close} onOpenExternally={openExternally} />;
 }

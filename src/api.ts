@@ -180,6 +180,22 @@ export interface Locator {
   ratio: number;
 }
 
+/** Everything the comic reader needs to open an issue. */
+export interface ComicSession {
+  /** Entry paths inside the archive, in reading order. */
+  pages: string[];
+  /** Base URL the reader resolves page images against. */
+  resource_base: string;
+  locator: string | null;
+  title: string;
+}
+
+/** Where the comic reader left off. Comics have no reflow, so a page index
+ *  is the whole position — no ratio needed. */
+export interface ComicLocator {
+  page: number;
+}
+
 export interface SearchHit {
   spine: number;
   /** Which occurrence within its chapter, so the reader can find it in the DOM. */
@@ -235,6 +251,8 @@ export const api = {
     invoke<Chapter>("reader_chapter", { id, index }),
   readerSavePosition: (id: number, locator: string, percent: number) =>
     invoke<Book>("reader_save_position", { id, locator, percent }),
+
+  comicOpen: (id: number) => invoke<ComicSession>("comic_open", { id }),
 
   readerSearch: (id: number, query: string) =>
     invoke<SearchHit[]>("reader_search", { id, query }),

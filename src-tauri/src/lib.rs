@@ -1,6 +1,7 @@
 //! Shelfmark — personal library and reader for ebooks and comics. Rust core entry point:
 //! wires up SQLite state, the HTTP client, and the Tauri command surface.
 
+mod comics;
 mod commands;
 mod covers;
 mod db;
@@ -23,12 +24,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        // Serves assets out of an open book's archive: stylesheets, images and
-        // embedded fonts, so the publisher's own typography can render as
-        // intended. URLs look like `<base>/<book id>/<path inside the zip>`.
+        // Serves entries out of an open book's archive: an EPUB's stylesheets,
+        // images and embedded fonts so the publisher's own typography renders as
+        // intended, and a comic's pages. URLs look like
+        // `<base>/<book id>/<path inside the zip>`.
         // The book's location comes from the library, never from the request,
         // and `reader::resource` only resolves entries that exist in the zip.
-        .register_uri_scheme_protocol("epubres", |ctx, request| {
+        .register_uri_scheme_protocol("bookres", |ctx, request| {
             let empty = |code: u16| {
                 tauri::http::Response::builder()
                     .status(code)
@@ -111,6 +113,7 @@ pub fn run() {
             commands::reader_chapter,
             commands::reader_save_position,
             commands::reader_search,
+            commands::comic_open,
             commands::list_annotations,
             commands::add_annotation,
             commands::update_annotation,
