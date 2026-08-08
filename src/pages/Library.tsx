@@ -333,7 +333,11 @@ export default function Library({
             : "Nothing matches these filters."}
         </p>
       ) : view === "grid" ? (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        // Columns are decided by how many covers fit, not by named breakpoints.
+        // A fixed ladder stops somewhere — six columns, in this case — and past
+        // that every extra pixel of window went into making the covers bigger
+        // instead of showing more of them.
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-4 gap-y-5">
           {shelves && !current
             ? shelves.map((s) =>
                 s.kind === "series" ? (

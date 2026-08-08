@@ -161,7 +161,11 @@ export default function App() {
 
       {/* Main */}
       <main className="relative flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-8 py-8">
+        {/* No width cap: a maximised window on a wide monitor was showing the
+            library in the middle half of the screen with empty gutters either
+            side. Pages that want a narrower measure — Settings, which is a
+            form — set their own. */}
+        <div className="px-8 py-8">
           {view === "dashboard" && (
             <Dashboard
               reloadToken={reloadToken}
