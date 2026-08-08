@@ -184,6 +184,48 @@ export interface Locator {
 export type ReadingDirection = "ltr" | "rtl";
 
 /** Everything the comic reader needs to open an issue. */
+/** A PDF page's size in points, as authored. */
+export interface PageSize {
+  w: number;
+  h: number;
+}
+
+/** An entry in a PDF's own table of contents. */
+export interface PdfOutline {
+  label: string;
+  /** Zero-based page, or null when the entry points nowhere this file holds. */
+  page: number | null;
+  /** Nesting depth, for indenting the tree it came from. */
+  depth: number;
+}
+
+/**
+ * A run of text on a page, in points from the top left — already flipped out
+ * of PDF's bottom-left origin by the backend.
+ */
+export interface TextRun {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text: string;
+}
+
+export interface PdfSession {
+  /**
+   * Every page's size, known before anything has been rendered. This is what
+   * lets the reader build the whole document's layout — and a scrollbar that
+   * means something — without rasterising 500 pages to find out how tall they
+   * are.
+   */
+  pages: PageSize[];
+  outline: PdfOutline[];
+  /** Base URL pages are rendered from: `<base>page/<n>?w=<pixels>`. */
+  resource_base: string;
+  locator: string | null;
+  title: string;
+}
+
 export interface ComicSession {
   /** Entry paths inside the archive, in reading order. */
   pages: string[];
@@ -260,6 +302,8 @@ export const api = {
     invoke<Book>("reader_save_position", { id, locator, percent }),
 
   comicOpen: (id: number) => invoke<ComicSession>("comic_open", { id }),
+  pdfOpen: (id: number) => invoke<PdfSession>("pdf_open", { id }),
+  pdfText: (id: number, page: number) => invoke<TextRun[]>("pdf_text", { id, page }),
   /** Returns how many books were changed. */
   setReadingDirection: (id: number, direction: ReadingDirection, wholeSeries: boolean) =>
     invoke<number>("set_reading_direction", { id, direction, wholeSeries }),

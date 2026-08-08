@@ -196,6 +196,62 @@ pub fn reader_search(
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---------------- built-in PDF reader ----------------
+
+/// Everything the PDF reader needs to lay out the whole document before a
+/// single page has been rasterised.
+#[derive(serde::Serialize)]
+pub struct PdfSession {
+    /// Every page's size in points. The reader needs all of them up front:
+    /// a scrollbar that means anything, and pages that don't jump about as
+    /// they arrive, both depend on knowing the shape of pages nobody has
+    /// looked at yet.
+    pub pages: Vec<crate::pdf::PageSize>,
+    /// The document's own table of contents, flattened with its depth.
+    pub outline: Vec<crate::pdf::Outline>,
+    pub resource_base: String,
+    pub locator: Option<String>,
+    pub title: String,
+}
+
+/// The selectable text on one page.
+///
+/// Fetched per page rather than with the session: extracting a page costs a few
+/// milliseconds, which is nothing on its own and half a minute across a
+/// five-hundred-page book nobody has scrolled to yet.
+#[tauri::command]
+pub fn pdf_text(state: State<'_, AppState>, id: i64, page: usize) -> CmdResult<Vec<crate::pdf::TextRun>> {
+    let path = {
+        let conn = state.conn.lock().map_err(s)?;
+        db::require_book(&conn, id).map_err(s)?.path
+    };
+    crate::pdf::page_text(std::path::Path::new(&path), page).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn pdf_open(state: State<'_, AppState>, id: i64) -> CmdResult<PdfSession> {
+    let (path, title, locator) = {
+        let conn = state.conn.lock().map_err(s)?;
+        let b = db::require_book(&conn, id).map_err(s)?;
+        (b.path, b.title, db::get_locator(&conn, id).map_err(s)?)
+    };
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("The file is no longer at {path}. Rescan your library."));
+    }
+    // Opening a book is the moment to drop what was rendered from the last
+    // copy of it: a file replaced on disk while the app was running would
+    // otherwise keep serving pages from the version that is gone.
+    crate::pdf::forget(id);
+    let book = crate::pdf::open(std::path::Path::new(&path)).map_err(|e| format!("{e:#}"))?;
+    Ok(PdfSession {
+        pages: book.pages,
+        outline: book.outline,
+        resource_base: resource_base(id),
+        locator,
+        title,
+    })
+}
+
 // ---------------- built-in comic reader ----------------
 
 /// Everything the comic reader needs: the page list, where its images come

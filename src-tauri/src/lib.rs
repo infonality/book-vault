@@ -9,6 +9,7 @@ mod error;
 mod formats;
 mod metadata;
 mod models;
+mod pdf;
 mod pdfcover;
 mod reader;
 mod scanner;
@@ -49,15 +50,33 @@ pub fn run() {
             };
 
             let state = ctx.app_handle().state::<AppState>();
-            let book_path = match state.conn.lock() {
-                Ok(conn) => db::get_book(&conn, id).ok().flatten().map(|b| b.path),
+            let book = match state.conn.lock() {
+                Ok(conn) => db::get_book(&conn, id).ok().flatten(),
                 Err(_) => None,
             };
-            let Some(book_path) = book_path else {
+            let Some(book) = book else {
                 return empty(404);
             };
+            let book_path = std::path::Path::new(&book.path);
 
-            match reader::resource(std::path::Path::new(&book_path), entry) {
+            // A PDF has no archive to serve entries from: its pages are
+            // rasterised on demand instead, at the width the reader asks for.
+            if book.format.eq_ignore_ascii_case("pdf") {
+                let Some(index) = pdf::page_index(entry) else {
+                    return empty(404);
+                };
+                let width = pdf::width_from_query(request.uri().query());
+                return match pdf::page_png(id, book_path, index, width) {
+                    Ok(png) => tauri::http::Response::builder()
+                        .header("Content-Type", "image/png")
+                        .header("Cache-Control", "max-age=3600")
+                        .body(png.to_vec())
+                        .unwrap(),
+                    Err(_) => empty(404),
+                };
+            }
+
+            match reader::resource(book_path, entry) {
                 Ok((bytes, mime)) => tauri::http::Response::builder()
                     .header("Content-Type", mime)
                     .header("Cache-Control", "max-age=3600")
@@ -114,6 +133,8 @@ pub fn run() {
             commands::reader_save_position,
             commands::reader_search,
             commands::comic_open,
+            commands::pdf_open,
+            commands::pdf_text,
             commands::set_reading_direction,
             commands::list_annotations,
             commands::add_annotation,

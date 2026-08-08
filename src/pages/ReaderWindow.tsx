@@ -4,6 +4,7 @@ import { api, Book } from "../api";
 import { Icon, Spinner } from "../ui";
 import Reader from "./Reader";
 import ComicReader from "./ComicReader";
+import PdfReader from "./PdfReader";
 import "../index.css";
 
 /**
@@ -64,6 +65,11 @@ export default function ReaderWindow({ bookId }: { bookId: number }) {
     );
   }
 
+  // A PDF is decided by its format rather than its shelf: both a scanned comic
+  // and a technical book arrive as rasterised pages, so they read the same way.
+  if (book.format.toLowerCase() === "pdf") {
+    return <PdfReader book={book} onClose={close} onOpenExternally={openExternally} />;
+  }
   if (book.kind === "comic") {
     return <ComicReader book={book} onClose={close} onOpenExternally={openExternally} />;
   }

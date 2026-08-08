@@ -13,11 +13,14 @@ import { Book } from "./api";
  * Whether a built-in reader can show this, or the OS has to.
  *
  * CBR is excluded on purpose and not by oversight: RAR's reference decoder
- * can't be vendored into an MIT project, so the archive is never opened. PDFs
- * go to the system viewer for now, comics and books alike.
+ * can't be vendored into an MIT project, so the archive is never opened.
  */
 export function readsInApp(book: Book): boolean {
   const format = book.format.toLowerCase();
+  // A PDF reads in app whichever shelf it is on: a scanned comic and a
+  // technical book are the same file format, and the reader rasterises pages
+  // either way.
+  if (format === "pdf") return true;
   return book.kind === "comic" ? format === "cbz" : format === "epub";
 }
 

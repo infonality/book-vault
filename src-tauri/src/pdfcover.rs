@@ -50,7 +50,7 @@ pub fn render_cover(pdf_path: &Path, covers_dir: &Path, book_id: i64) -> Result<
 }
 
 /// Run `f` with a bound PDFium instance, binding (and caching) on first use.
-fn with_pdfium<T>(f: impl FnOnce(&Pdfium) -> Result<T>) -> Result<T> {
+pub(crate) fn with_pdfium<T>(f: impl FnOnce(&Pdfium) -> Result<T>) -> Result<T> {
     PDFIUM.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
