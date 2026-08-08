@@ -213,7 +213,15 @@ body {
   background: transparent;
 }
 
-* {
+/* The app chrome isn't selectable: dragging across the library and highlighting
+   half the labels feels like a web page rather than an application.
+ *
+ * Set on the root so it *inherits*. The universal selector was doing this job
+ * and is a trap — `*` matches every descendant too, so a subtree that opts back
+ * in has each of its children silently overridden again. That is exactly how
+ * the PDF reader's text layer came to be laid out correctly and impossible to
+ * select. Anything that wants selection back can now just say so. */
+html {
   -webkit-user-select: none;
   user-select: none;
 }
